@@ -1,0 +1,90 @@
+substitutions:
+  devicename: kc868_leaf
+
+esphome:
+  name: ${devicename}
+  friendly_name: "Leaf OBD Gateway (KC868)"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${devicename}_fallback"
+    password: "changeme123"
+  power_save_mode: none
+
+api:
+
+ota:
+  platform: esphome
+
+external_components:
+  - source:
+      type: local
+      path: custom_components/leaf_obd_uart
+
+uart:
+  - id: uart_obd
+    tx_pin: GPIO12  # UART1 TX
+    rx_pin: GPIO13  # UART1 RX
+    baud_rate: 38400  # Для HC-05/ELM327
+
+logger:
+  level: DEBUG
+  baud_rate: 115200       # 0 для отключения вывода логов в UART
+  logs:
+    leaf_obd_uart: DEBUG
+
+leaf_obd_uart:
+  id: leaf_obd
+  uart_id: uart_obd
+  update_interval: 60s
+  soc:
+    name: "Leaf Battery SOC"
+    unit_of_measurement: "%"
+    icon: "mdi:battery"
+    accuracy_decimals: 1
+    device_class: battery
+  hv:
+    name: "Leaf HV Voltage"
+    unit_of_measurement: "V"
+    icon: "mdi:flash"
+    accuracy_decimals: 2
+    device_class: voltage
+  temp:
+    name: "Leaf Battery Temp"
+    unit_of_measurement: "°C"
+    icon: "mdi:thermometer"
+    accuracy_decimals: 1
+    device_class: temperature
+  soh:
+    name: "Leaf Battery SOH"
+    unit_of_measurement: "%"
+    icon: "mdi:battery-heart"
+    accuracy_decimals: 1
+    device_class: battery
+  ahr:
+    name: "Leaf Battery AHr"
+    unit_of_measurement: "Ah"
+    icon: "mdi:battery-heart"
+    accuracy_decimals: 2
+    device_class: battery
+  odometer:
+    name: "Leaf Odometer"
+    unit_of_measurement: "km"
+    icon: "mdi:counter"
+    accuracy_decimals: 0
+    device_class: distance
+
+sensor:
+  - platform: uptime
+    name: "Uptime Sensor"
+  - platform: homeassistant
+    entity_id: sensor.outdoor_temperature
+    id: ext_temp
+    internal: true
