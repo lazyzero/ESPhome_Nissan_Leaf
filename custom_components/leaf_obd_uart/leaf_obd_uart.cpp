@@ -7,7 +7,16 @@ namespace esphome {
 namespace leaf_obd_uart {
 
 static const char *const TAG = "leaf_obd_uart";
-
+/*
+LeafObdComponent::~LeafObdComponent() {
+  if (stream_) {
+    delete stream_;
+    stream_ = nullptr;
+    ESP_LOGD(TAG, "UARTStreamAdapter deleted");
+  }
+}
+*/
+/*
 bool ELM327::begin(Stream &stream) {
   elm_stream_ = &stream;
   is_connected_ = false;
@@ -20,7 +29,9 @@ bool ELM327::begin(Stream &stream) {
     return false;
   }
 
-  while (elm_stream_->available()) {
+  // Очистка буфера с таймаутом
+  unsigned long start = millis();
+  while (elm_stream_->available() && millis() - start < 200) {
     elm_stream_->read();
   }
   ESP_LOGD(TAG, "UART buffer cleared before initialization");
@@ -29,9 +40,12 @@ bool ELM327::begin(Stream &stream) {
     ESP_LOGE(TAG, "Failed to send ATZ command");
     return false;
   }
-  delay(750); // Увеличено для надежности на основе логов
+  start = millis();
+  while (millis() - start < 1500) { // Увеличен таймаут для ATZ
+    yield();
+  }
 
-  if (!readResponse()) {
+  if (!readResponse(2000)) { // Увеличен таймаут для ответа ATZ
     ESP_LOGE(TAG, "No response to ATZ command");
     return false;
   }
@@ -42,23 +56,33 @@ bool ELM327::begin(Stream &stream) {
   }
 
   const char *init_commands[] = {
-      "ATE0", "ATL0", "ATSP6", "ATH1", "ATS0", "ATCAF0",
-      "ATFCSD300000", "ATFCSM1"
+      "ATE0", "ATL0", "ATSP6", "ATH1", "ATS0", "ATCAF0", "ATFCSD300000", "ATFCSM1"
   };
   for (const char *cmd : init_commands) {
-    if (!sendCommand(cmd) || !readResponse()) {
-      ESP_LOGE(TAG, "Failed to initialize with command: %s", cmd);
+    if (!sendCommand(cmd)) {
+      ESP_LOGE(TAG, "Failed to send command: %s", cmd);
+      return false;
+    }
+    if (!readResponse(500)) {
+      ESP_LOGE(TAG, "No response to command: %s", cmd);
       return false;
     }
     ESP_LOGD(TAG, "Raw %s response: '%s'", cmd, response_buffer_);
-    if (strstr(response_buffer_, "OK") == nullptr) {
+    if (strstr(response_buffer_, "OK") == nullptr && strcmp(cmd, "ATFCSM1") != 0) {
       ESP_LOGE(TAG, "Invalid response to %s: %s", cmd, response_buffer_);
       return false;
     }
-    delay(50);
+    if (strcmp(cmd, "ATFCSM1") == 0 && strstr(response_buffer_, "?")) {
+      ESP_LOGW(TAG, "ATFCSM1 not supported by this adapter, continuing...");
+      // Продолжаем, так как ATFCSM1 не критично
+    }
+    start = millis();
+    while (millis() - start < 50) {
+      yield();
+    }
   }
 
-  if (!sendCommand("ATDP") || !readResponse()) {
+  if (!sendCommand("ATDP") || !readResponse(500)) {
     ESP_LOGE(TAG, "Failed to check active protocol");
     return false;
   }
@@ -66,17 +90,67 @@ bool ELM327::begin(Stream &stream) {
 
   is_connected_ = true;
   status_ = OBD_CONNECTED;
-  if (isCarResponsive()) {
-    status_ = CAR_CONNECTED;
-    ESP_LOGI(TAG, "ELM327 initialized, connected to car");
-  } else {
-    ESP_LOGW(TAG, "No car response, OBD connected only");
+  ESP_LOGI(TAG, "ELM327 initialized successfully");
+  return true;
+}
+*/
+// Альтернативная инициализация, как в лифспае
+bool ELM327::begin(Stream &stream) {
+  elm_stream_ = &stream;
+  is_connected_ = false;
+  status_ = DISCONNECTED;
+  response_buffer_[0] = '\0';
+  ESP_LOGD(TAG, "ELM327 begin called with stream");
+
+  if (!elm_stream_) {
+    ESP_LOGE(TAG, "Stream is null!");
+    return false;
   }
+
+  // Очистка буфера с таймаутом
+  unsigned long start = millis();
+  while (elm_stream_->available() && millis() - start < 200) {
+    elm_stream_->read();
+  }
+  ESP_LOGD(TAG, "UART buffer cleared before initialization");
+
+  // Полная инициализация как в LeafSpy
+  if (!sendCommand("ATZ") || !readResponse(1300)) return false; // Сброс
+  if (!sendCommand("ATE0") || !readResponse(250)) return false;  // Отключить эхо
+  if (!sendCommand("ATL0") || !readResponse(200)) return false;  // Отключить перевод строк
+  if (!sendCommand("ATSP6") || !readResponse(250)) return false; // CAN 500 кбит/с
+  if (!sendCommand("ATH1") || !readResponse(200)) return false;  // Включить заголовки
+  if (!sendCommand("ATS0") || !readResponse(200)) return false;  // Отключить пробелы
+  if (!sendCommand("ATCAF0") || !readResponse(200)) return false; // Отключить автоформатирование
+  if (!sendCommand("ATSH797") || !readResponse(200)) return false;
+  if (!sendCommand("ATFCSH797") || !readResponse(200)) return false;
+  if (!sendCommand("ATFCSD300000") || !readResponse(200)) return false;
+  if (!sendCommand("ATFCSM1") || !readResponse(300)) return false;
+  if (!sendCommand("0210C0") || !readResponse(500)) return false; // Mystery command
+  if (!sendCommand("ATDP") || !readResponse(500)) {
+    ESP_LOGE(TAG, "Failed to check active protocol");
+    return false;
+  }
+  ESP_LOGD(TAG, "Active protocol: %s", response_buffer_);
+
+  is_connected_ = true;
+  status_ = OBD_CONNECTED;
+  ESP_LOGI(TAG, "ELM327 initialized successfully");
   return true;
 }
 
+
 bool ELM327::isCarResponsive() {
-  if (!elm_stream_) return false;
+  if (!elm_stream_) {
+    ESP_LOGW(TAG, "Cannot check car responsiveness: Stream is null");
+    return false;
+  }
+
+  // Очистка буфера с таймаутом
+  unsigned long start = millis();
+  while (elm_stream_->available() && millis() - start < 200) {
+    elm_stream_->read();
+  }
 
   if (!sendCommand("ATRV")) {
     ESP_LOGW(TAG, "Failed to send ATRV command");
@@ -94,7 +168,7 @@ bool ELM327::isCarResponsive() {
   }
 
   float voltage = atof(response_buffer_);
-  if (voltage > 12.0) {
+  if (voltage > 12.8) {
     ESP_LOGD(TAG, "ATRV voltage: %.2fV. Car is on.", voltage);
     return true;
   }
@@ -103,11 +177,63 @@ bool ELM327::isCarResponsive() {
 }
 
 bool ELM327::readResponse(uint32_t timeout_ms) {
+    if (!elm_stream_) {
+        ESP_LOGW(TAG, "Cannot read response: Stream is null");
+        return false;
+    }
+
+    response_buffer_[0] = '\0';
+    size_t idx = 0;
+    unsigned long start = millis();
+
+    while (millis() - start < timeout_ms) {
+        if (elm_stream_->available()) {
+            char c = elm_stream_->read();
+            // ESP_LOGD(TAG, "Received char: %c (0x%02X)", isprint(c) ? c : '.', c); // Можно оставить для отладки, но много логов
+
+            // Пропускаем символы окончания строки
+            if (c == '\r' || c == '\n') {
+                continue;
+            }
+
+            // Проверяем символ завершения ответа ELM327
+            if (c == '>') {
+                // Завершаем строку в буфере
+                response_buffer_[idx] = '\0';
+                ESP_LOGD(TAG, "Response complete: %s", response_buffer_);
+                return true; // Успешно завершено
+            }
+
+            // Записываем обычный символ в буфер
+            if (idx < sizeof(response_buffer_) - 1) {
+                response_buffer_[idx++] = c;
+            } else {
+                ESP_LOGW(TAG, "Response buffer overflow at %d bytes", idx);
+                response_buffer_[idx] = '\0'; // Все равно завершаем строку
+                // Можно вернуть false здесь, если переполнение критично
+                // Но лучше завершить чтение, сохранив то, что есть.
+                // break; // или return false;
+            }
+        }
+        yield();
+    }
+
+    // Таймаут
+    response_buffer_[idx] = '\0'; // Завершаем строку на случай таймаута
+    ESP_LOGW(TAG, "Response timeout after %dms: %s", timeout_ms, response_buffer_);
+    // Возвращаем true, если что-то было получено, иначе false.
+    // Это соответствует оригинальной логике.
+    return idx > 0;
+}
+
+/*
+bool ELM327::readResponse(uint32_t timeout_ms) {
   if (!elm_stream_) {
     ESP_LOGW(TAG, "Cannot read response: Stream is null");
     return false;
   }
 
+  response_buffer_[0] = '\0';
   size_t idx = 0;
   unsigned long start = millis();
   bool multi_frame = false;
@@ -127,7 +253,7 @@ bool ELM327::readResponse(uint32_t timeout_ms) {
         response_buffer_[idx++] = c;
         if (!multi_frame && idx >= 3 && strncmp(response_buffer_, "7BB", 3) == 0) {
           multi_frame = true;
-          timeout_ms = 2000; // Увеличить тайм-аут для многофреймовых ответов
+          timeout_ms = 2000;
         }
       } else {
         ESP_LOGW(TAG, "Response buffer overflow at %d bytes", idx);
@@ -144,26 +270,30 @@ bool ELM327::readResponse(uint32_t timeout_ms) {
   ESP_LOGW(TAG, "Response timeout after %dms: %s", timeout_ms, response_buffer_);
   return idx > 0;
 }
+*/
 
 bool ELM327::sendCommand(const char *cmd) {
   if (!elm_stream_) {
     ESP_LOGW(TAG, "Cannot send command: Stream is null");
     return false;
   }
-  while (elm_stream_->available()) {
+  // Очистка буфера с таймаутом
+  unsigned long start = millis();
+  while (elm_stream_->available() && millis() - start < 200) {
     elm_stream_->read();
   }
+  ESP_LOGD(TAG, "Attempting to send command: %s", cmd);
   elm_stream_->print(cmd);
   elm_stream_->print("\r");
   elm_stream_->flush();
-  ESP_LOGD(TAG, "Command sent: %s", cmd);
+  ESP_LOGD(TAG, "Command sent successfully: %s", cmd);
   return true;
 }
 
 bool ELM327::setECU(const char *ecu) {
   char cmd[16];
   snprintf(cmd, sizeof(cmd), "ATSH%s", ecu);
-  if (!sendCommand(cmd) || !readResponse()) {
+  if (!sendCommand(cmd) || !readResponse(500)) {
     ESP_LOGE(TAG, "Failed to set ECU: %s", cmd);
     return false;
   }
@@ -172,7 +302,7 @@ bool ELM327::setECU(const char *ecu) {
     return false;
   }
   snprintf(cmd, sizeof(cmd), "ATFCSH%s", ecu);
-  if (!sendCommand(cmd) || !readResponse()) {
+  if (!sendCommand(cmd) || !readResponse(500)) {
     ESP_LOGE(TAG, "Failed to set Flow Control: %s", cmd);
     return false;
   }
@@ -194,7 +324,7 @@ bool ELM327::queryUDS(const char *ecu, const char *pid, int retries) {
       ESP_LOGW(TAG, "Retry %d: Failed to set ECU: %s", i + 1, ecu);
       continue;
     }
-    if (!sendCommand(pid) || !readResponse()) {
+    if (!sendCommand(pid) || !readResponse(1000)) {
       ESP_LOGW(TAG, "Retry %d: No response to PID: %s", i + 1, pid);
       continue;
     }
@@ -215,6 +345,22 @@ void LeafObdComponent::setup() {
     ESP_LOGE(TAG, "UART parent or stream is null!");
     return;
   }
+  ESP_LOGD(TAG, "UART initialized by ESPHome"); // Заменяем parent_->setup()
+  flush_uart();
+  unsigned long start = millis();
+  while (millis() - start < 200) {
+    yield();
+  }
+  if (!elm_.begin(*stream_)) {
+    ESP_LOGE(TAG, "ELM327 initial setup failed");
+    elm_.set_status(DISCONNECTED);
+  } else if (elm_.isCarResponsive()) {
+    elm_.set_status(CAR_CONNECTED);
+    ESP_LOGI(TAG, "ELM327 setup complete, car connected");
+  } else {
+    elm_.set_status(OBD_CONNECTED);
+    ESP_LOGI(TAG, "ELM327 setup complete, no car response");
+  }
 }
 
 void LeafObdComponent::update() {
@@ -222,18 +368,14 @@ void LeafObdComponent::update() {
   ESP_LOGD(TAG, "Updating Leaf OBD data (state=%d)...", state);
 
   switch (state) {
-    case 0: // Проверка состояния автомобиля
-      if (!elm_.isCarResponsive()) {
-        ESP_LOGI(TAG, "Car is not responsive. Setting DISCONNECTED.");
-        elm_.set_status(DISCONNECTED);
-        publish_nan();
-        state = 0;
-        return;
-      }
+    case 0: // Проверка состояния ELM327 и автомобиля
       if (elm_.get_status() == DISCONNECTED) {
         ESP_LOGI(TAG, "ELM is not initialized. Starting setup...");
         flush_uart();
-        delay(100);
+        unsigned long start = millis();
+        while (millis() - start < 100) {
+          yield();
+        }
         if (!elm_.begin(*stream_)) {
           ESP_LOGE(TAG, "ELM327 initialization failed. Retrying later.");
           publish_nan();
@@ -241,10 +383,18 @@ void LeafObdComponent::update() {
           return;
         }
       }
+      if (!elm_.isCarResponsive()) {
+        ESP_LOGI(TAG, "Car is not responsive. Setting OBD_CONNECTED.");
+        elm_.set_status(OBD_CONNECTED);
+        publish_nan();
+        state = 0;
+        return;
+      }
+      elm_.set_status(CAR_CONNECTED);
       state = 1;
       break;
 
-    case 1: // Запрос SOC
+    case 2: // Другой запрос (переделать)
       if (soc_ && elm_.connected()) {
         if (elm_.queryUDS("797", "02215D")) { // Заменен PID
           const char* buffer = elm_.get_response_buffer();
@@ -270,99 +420,218 @@ void LeafObdComponent::update() {
           ESP_LOGW(TAG, "Failed to query SOC");
         }
       }
-      state = 2;
-      break;
-
-    case 2: // Запрос Voltage, Temp, SOH, AHr
-      if (elm_.connected() && elm_.setECU("79B")) {
-        if (hv_ && elm_.queryUDS("79B", "022102")) {
-          const char* buffer = elm_.get_response_buffer();
-          if (strlen(buffer) >= 13 && strstr(buffer, "7BB") && !strstr(buffer, "7F")) {
-            char voltage_hex[5];
-            strncpy(voltage_hex, &buffer[9], 4);
-            voltage_hex[4] = '\0';
-            int voltage_raw = strtol(voltage_hex, nullptr, 16);
-            if (voltage_raw > 0) {
-              float hv_val = voltage_raw / 10.0; // Уточнено масштабирование
-              hv_->publish_state(hv_val);
-              ESP_LOGD(TAG, "Voltage: %.2fV", hv_val);
-            } else {
-              hv_->publish_state(NAN);
-              ESP_LOGW(TAG, "Invalid Voltage value: %d", voltage_raw);
-            }
-          } else {
-            hv_->publish_state(NAN);
-            ESP_LOGW(TAG, "Invalid Voltage response: %s", buffer);
-          }
-        }
-
-        if (temp_ && elm_.queryUDS("79B", "022104")) {
-          const char* buffer = elm_.get_response_buffer();
-          if (strlen(buffer) >= 15 && strstr(buffer, "7BB") && !strstr(buffer, "7F")) {
-            char temp_hex[3];
-            strncpy(temp_hex, &buffer[9], 2);
-            temp_hex[2] = '\0';
-            int temp_raw = strtol(temp_hex, nullptr, 16);
-            if (temp_raw > 0) {
-              float temp_val = (temp_raw - 40) / 2.0; // Уточнено масштабирование
-              temp_->publish_state(temp_val);
-              ESP_LOGD(TAG, "Temperature: %.1f°C", temp_val);
-            } else {
-              temp_->publish_state(NAN);
-              ESP_LOGW(TAG, "Invalid Temp value: %d", temp_raw);
-            }
-          } else {
-            temp_->publish_state(NAN);
-            ESP_LOGW(TAG, "Invalid Temp response: %s", buffer);
-          }
-        }
-
-        if ((soh_ || ahr_) && elm_.queryUDS("79B", "022101")) {
-          const char* buffer = elm_.get_response_buffer();
-          if (strlen(buffer) >= 15 && strstr(buffer, "7BB") && !strstr(buffer, "7F")) {
-            if (soh_) {
-              char soh_hex[3];
-              strncpy(soh_hex, &buffer[7], 2);
-              soh_hex[2] = '\0';
-              int soh_raw = strtol(soh_hex, nullptr, 16);
-              if (soh_raw > 0) {
-                float soh_val = soh_raw / 2.0; // Уточнено масштабирование
-                soh_->publish_state(soh_val);
-                ESP_LOGD(TAG, "SOH: %.1f%%", soh_val);
-              } else {
-                soh_->publish_state(NAN);
-                ESP_LOGW(TAG, "Invalid SOH value: %d", soh_raw);
-              }
-            }
-            if (ahr_) {
-              char ahr_hex[4];
-              strncpy(ahr_hex, &buffer[11], 3);
-              ahr_hex[3] = '\0';
-              int ahr_raw = strtol(ahr_hex, nullptr, 16);
-              if (ahr_raw > 0) {
-                float ahr_val = ahr_raw / 10.0; // Уточнено масштабирование
-                ahr_->publish_state(ahr_val);
-                ESP_LOGD(TAG, "AHr: %.2f Ah", ahr_val);
-              } else {
-                ahr_->publish_state(NAN);
-                ESP_LOGW(TAG, "Invalid AHr value: %d", ahr_raw);
-              }
-            }
-          } else {
-            if (soh_) soh_->publish_state(NAN);
-            if (ahr_) ahr_->publish_state(NAN);
-            ESP_LOGW(TAG, "Invalid SOH/AHr response: %s", buffer);
-          }
-        }
-      }
       state = 3;
       break;
 
-    case 3: // Запрос Odometer
+    case 1: // Запрос Voltage, Temp, SOH, AHr
+      if (elm_.connected() && elm_.setECU("79B")) {
+
+        if (elm_.queryUDS("79B", "022101")) {
+
+
+// Предполагаем, что elm_.queryUDS("79B", "022101") уже был вызван.
+const char* raw_response = elm_.get_response_buffer(); // Или просто response_buffer_
+int response_len = strlen(raw_response);
+
+// --- Проверка полученного ответа ---
+// Минимальная длина для First Frame с 6 байтами данных = 19 символов.
+if (response_len < 114) {
+    ESP_LOGE(TAG, "Response is too short for 022101: %s", raw_response);
+    // publish_nan() для соответствующих сенсоров
+    if (soc_) soc_->publish_state(NAN);
+    if (soh_) soh_->publish_state(NAN);
+    if (ahr_) ahr_->publish_state(NAN);
+    if (hv_) hv_->publish_state(NAN);
+    break;  // Если строка меньшей длины, значит выходим из case
+    //return;
+}
+
+// --- Извлечение длины полезной нагрузки из First Frame ---
+// Байты 5 и 6 (символы 5 и 6 в строке 0-based) содержат длину в hex.
+// Пример: "...7BB1029..." -> длина = 0x29 = 41 байт.
+// Извлекаем подстроку длиной 2 символа, начиная с индекса 5.
+char length_hex_chars[3] = {raw_response[5], raw_response[6], '\0'};
+char* endptr_len;
+int total_expected_data_length = strtol(length_hex_chars, &endptr_len, 16);
+
+// Проверяем результат преобразования длины
+if (*endptr_len != '\0' || total_expected_data_length <= 0 || total_expected_data_length > 0xC6) {
+     ESP_LOGW(TAG, "Failed to parse or invalid data length from First Frame header: %s. Using default 41.", length_hex_chars);
+     total_expected_data_length = 41; // Значение по умолчанию или ошибка
+     // Или return;
+}
+
+// --- Инициализация буфера для бинарных данных ---
+uint8_t payload_data[0xC6]; // 0xC6 = 198
+int payload_len = 0;
+
+// --- Основной цикл преобразования ---
+// Мы знаем структуру ответа ISO-TP для 022101:
+// - First Frame: 7BB10XX + 12 hex символов данных + (возможные другие данные)
+// - Consecutive Frames: 7BB2X + 14 hex символов данных + ...
+// Данные в FF начинаются с индекса 7. Данные в CF начинаются с индекса 5 относительно начала фрейма.
+// Длина FF данных = 12 символов. Длина CF данных = 14 символов.
+int pos = 0; // Текущая позиция в строке raw_response
+
+while (pos < response_len && payload_len < 0xC6) {
+    // --- Определение типа фрейма по индексу и длине строки ---
+    // Это логика без strncmp. Определяем тип фрейма на основе позиции и оставшейся длины.
+    // First Frame всегда начинается с позиции 0.
+    if (pos == 0) {
+        // --- Обработка First Frame ---
+        // Извлекаем 6 байт (12 hex символов) данных из First Frame, начиная с индекса 7.
+        for (int i = 0; i < 12 && (pos + 7 + i) < response_len && payload_len < 0xC6; i += 2) {
+             // --- Преобразование пары hex-символов в байт с помощью strtol ---
+             // Создаем временную C-строку из двух символов и завершающего нуля.
+             char byte_hex_chars[3] = {raw_response[pos + 7 + i], raw_response[pos + 7 + i + 1], '\0'};
+             char* endptr;
+             // Преобразуем. base=16 для hex.
+             long val = strtol(byte_hex_chars, &endptr, 16);
+
+             // --- Проверка результата преобразования ---
+             // *endptr != '\0' означает, что в строке были недопустимые символы.
+             // val > 0xFF означает, что число больше 255.
+             // val < 0 означает, что число отрицательное (не должно быть для hex без знака, но strtol возвращает long).
+             if (*endptr != '\0' || val > 0xFF || val < 0) {
+                 ESP_LOGE(TAG, "Failed to convert hex byte pair '%s' from First Frame data at global pos %d", byte_hex_chars, pos + 7 + i);
+                 // publish_nan() / return
+                 if (soc_) soc_->publish_state(NAN);
+                 if (soh_) soh_->publish_state(NAN);
+                 if (ahr_) ahr_->publish_state(NAN);
+                 if (hv_) hv_->publish_state(NAN);
+                 return;
+             }
+
+             // --- Запись байта в буфер ---
+             payload_data[payload_len++] = (uint8_t)val;
+        }
+        // Перемещаем pos на начало следующего потенциального фрейма.
+        // First Frame: 7 (заголовок) + 12 (данные первого фрейма) = 19 символов.
+        pos += 19;
+    }
+    // --- Обработка Consecutive Frames ---
+    // CF идут после FF. Проверяем, остались ли символы и соответствует ли позиция началу CF.
+    // CF имеют префикс 7BB2X (5 символов). Данные CF начинаются с позиции 5 относительно начала фрейма.
+    // Проверяем, достаточно ли символов в строке для минимального CF (заголовок 5 + 2 символа данных = 7)
+    else if ((response_len - pos) >= 7 && pos >= 19 && (pos - 19) % 19 == 0) {
+        // Это условие пытается определить CF: позиция после FF (>=19) и кратна шагу фрейма (19).
+        // Однако, оно может быть хрупким. Более надежно просто проверить префикс, но по запросу избегаем strncmp.
+        // Альтернатива: просто обрабатываем оставшиеся данные блоками по 19, если они подходят.
+        // Упростим: если pos >= 19 и осталось >= 7 символов, пробуем обработать как CF.
+
+        // Проверка на минимальную длину CF (заголовок 5 + 2 символа данных = 7)
+        // if (response_len - pos < 7) { break; } // Уже проверили выше
+
+        // Извлекаем 7 байт (14 hex символов) данных из Consecutive Frame, начиная с индекса 5 относительно начала фрейма.
+        for (int i = 0; i < 14 && (pos + 5 + i) < response_len && payload_len < 0xC6; i += 2) {
+             if ((pos + 5 + i + 1) >= response_len) {
+                 ESP_LOGE(TAG, "Hex string for Consecutive Frame data is truncated at global pos %d", pos + 5 + i);
+                 // publish_nan() / return
+                 if (soc_) soc_->publish_state(NAN);
+                 if (soh_) soh_->publish_state(NAN);
+                 if (ahr_) ahr_->publish_state(NAN);
+                 if (hv_) hv_->publish_state(NAN);
+                 return;
+             }
+
+             // --- Преобразование пары hex-символов в байт с помощью strtol ---
+             char byte_hex_chars[3] = {raw_response[pos + 5 + i], raw_response[pos + 5 + i + 1], '\0'};
+             char* endptr;
+             long val = strtol(byte_hex_chars, &endptr, 16);
+
+             if (*endptr != '\0' || val > 0xFF || val < 0) {
+                 ESP_LOGE(TAG, "Failed to convert hex byte pair '%s' from Consecutive Frame data at global pos %d", byte_hex_chars, pos + 5 + i);
+                 // publish_nan() / return
+                 if (soc_) soc_->publish_state(NAN);
+                 if (soh_) soh_->publish_state(NAN);
+                 if (ahr_) ahr_->publish_state(NAN);
+                 if (hv_) hv_->publish_state(NAN);
+                 return;
+             }
+
+             // --- Запись байта в буфер ---
+             payload_data[payload_len++] = (uint8_t)val;
+        }
+        // Перемещаем pos на начало следующего потенциального фрейма.
+        // Consecutive Frame: 5 (заголовок) + 14 (данные последующих фреймов) = 19 символов.
+        pos += 19;
+    } else {
+        // Если позиция не соответствует ожидаемому началу FF или CF, или осталось меньше 7 символов,
+        // значит, мы либо обработали все фреймы, либо наткнулись на неполный/остаточный фрагмент.
+        // Просто выходим из цикла.
+        break;
+    }
+}
+
+// --- Проверка итоговой длины ---
+ESP_LOGD(TAG, "Finished parsing 022101 response. Extracted payload length: %d bytes (expected: %d)", payload_len, total_expected_data_length);
+// Логирование первых нескольких байт для отладки
+std::string debug_hex;
+for(int i = 0; i < std::min(payload_len, 10); ++i) {
+    char buf[3];
+    snprintf(buf, sizeof(buf), "%02X", payload_data[i]);
+    debug_hex += buf;
+}
+ESP_LOGD(TAG, "Byte Payload (first 10 bytes hex): %s", debug_hex.c_str());
+
+// Минимальные индексы, которые мы используем: HV(16,17), SOH(20,21), SOC(27,28,29), AHr(30,31,32,33).
+// --- Извлечение параметров по известным смещениям ---
+// payload_data теперь содержит байты данных.
+
+// --- HV Voltage (байты 16, 17) ---
+if (hv_) {
+        uint16_t hv_raw = (static_cast<uint16_t>(payload_data[20]) << 8) | payload_data[21];
+        float hv_val = static_cast<float>(hv_raw) / 100.0;
+        hv_->publish_state(hv_val);
+        ESP_LOGD(TAG, "Decoded HV Voltage: %.2fV", hv_val);
+}
+
+// --- SOH (байты 20, 21) ---
+if (soh_) {
+        uint16_t soh_raw = (static_cast<uint16_t>(payload_data[24]) << 8) | payload_data[25];
+        float soh_val = static_cast<float>(soh_raw) / 15.671;
+        soh_->publish_state(soh_val);
+        ESP_LOGD(TAG, "Decoded SOH: %.4f%%", soh_val);
+}
+
+// --- SOC (байты 27, 28, 29) ---
+if (soc_) {
+        // Предполагаем 3 байта, как в предыдущих примерах и формулах.
+        uint32_t soc_raw = (static_cast<uint32_t>(payload_data[31]) << 16) |
+                           (static_cast<uint32_t>(payload_data[32]) << 8) |
+                            static_cast<uint32_t>(payload_data[33]);
+        float soc_val = static_cast<float>(soc_raw) / 10000.0;
+        soc_->publish_state(soc_val);
+        ESP_LOGD(TAG, "Decoded SOC: %.4f%%", soc_val);
+}
+
+// --- AHr (байты 30, 31, 32, 33) ---
+if (ahr_) {
+         // Предполагаем 4 байта, как в предыдущих примерах и формулах.
+         uint32_t ahr_raw = (static_cast<uint32_t>(payload_data[34]) << 24) |
+                            (static_cast<uint32_t>(payload_data[35]) << 16) |
+                            (static_cast<uint32_t>(payload_data[36]) << 8) |
+                             static_cast<uint32_t>(payload_data[37]);
+         float ahr_val = static_cast<float>(ahr_raw) / 10000.0;
+         ahr_->publish_state(ahr_val);
+         ESP_LOGD(TAG, "Decoded AHr: %.4fAh", ahr_val);
+}
+
+// ... обработка других параметров ...
+ESP_LOGD(TAG, "Finished processing 022101 response for ECU 79B");
+
+
+        }
+
+      }
+      state = 2;
+      break;
+
+    case 3: // Запрос Odometer 
       if (odometer_ && elm_.connected()) {
-        if (elm_.queryUDS("744", "022110")) {
+        if (elm_.queryUDS("743", "022110")) {
           const char* buffer = elm_.get_response_buffer();
-          if (strlen(buffer) >= 15 && strstr(buffer, "764") && !strstr(buffer, "7F")) {
+          if (strlen(buffer) >= 15 && strstr(buffer, "763") && !strstr(buffer, "7F")) {
             char odo_hex[5];
             strncpy(odo_hex, &buffer[9], 4);
             odo_hex[4] = '\0';
