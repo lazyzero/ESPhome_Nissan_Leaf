@@ -122,12 +122,13 @@ bool ELM327::begin(Stream &stream) {
   if (!sendCommand("ATH1") || !readResponse(200)) return false;  // Включить заголовки
   if (!sendCommand("ATS0") || !readResponse(200)) return false;  // Отключить пробелы
   if (!sendCommand("ATCAF0") || !readResponse(200)) return false; // Отключить автоформатирование
-  if (!sendCommand("ATSH797") || !readResponse(200)) return false;
-  if (!sendCommand("ATFCSH797") || !readResponse(200)) return false;
-  if (!sendCommand("ATFCSD300000") || !readResponse(200)) return false;
-  if (!sendCommand("ATFCSM1") || !readResponse(300)) return false;
+  if (!sendCommand("ATSH797") || !readResponse(200)) return false;  // Set Header to 
+  if (!sendCommand("ATFCSH797") || !readResponse(200)) return false;  // FC, Set the Header to 
+  if (!sendCommand("ATFCSD300000") || !readResponse(200)) return false;  // FC, Set Data to [...]
+// команды ATFCSH и ATFCSD обязательно должны идти перед ATFCSM1
+  if (!sendCommand("ATFCSM1") || !readResponse(300)) return false;  // Flow Control, Set the Mode to 
   if (!sendCommand("0210C0") || !readResponse(500)) return false; // Mystery command
-  if (!sendCommand("ATDP") || !readResponse(500)) {
+  if (!sendCommand("ATDP") || !readResponse(500)) {  // Describe the current Protocol
     ESP_LOGE(TAG, "Failed to check active protocol");
     return false;
   }
@@ -292,7 +293,7 @@ bool ELM327::sendCommand(const char *cmd) {
 
 bool ELM327::setECU(const char *ecu) {
   char cmd[16];
-  snprintf(cmd, sizeof(cmd), "ATSH%s", ecu);
+  snprintf(cmd, sizeof(cmd), "ATSH%s", ecu);  // Set Header to
   if (!sendCommand(cmd) || !readResponse(500)) {
     ESP_LOGE(TAG, "Failed to set ECU: %s", cmd);
     return false;
@@ -301,7 +302,7 @@ bool ELM327::setECU(const char *ecu) {
     ESP_LOGE(TAG, "Invalid response to %s: %s", cmd, response_buffer_);
     return false;
   }
-  snprintf(cmd, sizeof(cmd), "ATFCSH%s", ecu);
+  snprintf(cmd, sizeof(cmd), "ATFCSH%s", ecu);  // set the ID Mask to 
   if (!sendCommand(cmd) || !readResponse(500)) {
     ESP_LOGE(TAG, "Failed to set Flow Control: %s", cmd);
     return false;
@@ -318,25 +319,58 @@ bool ELM327::connected() {
 }
 
 bool ELM327::queryUDS(const char *ecu, const char *pid, int retries) {
-  for (int i = 0; i < retries; i++) {
+//  for (int i = 0; i < retries; i++) {
+// Убираем несколько переподключений, так как в коде это не используется, да и лишние задержки
     response_buffer_[0] = '\0';
     if (!setECU(ecu)) {
-      ESP_LOGW(TAG, "Retry %d: Failed to set ECU: %s", i + 1, ecu);
-      continue;
+      ESP_LOGW(TAG, "Retry %d: Failed to set ECU: %s", ecu);
+//      ESP_LOGW(TAG, "Retry %d: Failed to set ECU: %s", i + 1, ecu);
+//      continue;
     }
+  // --- Специальная инициализация для ECU 743 ---
+  // Проверяем, является ли текущий ECU целевым (743)
+  if (strcmp(ecu, "743") == 0) {
+    ESP_LOGD(TAG, "Performing special initialization for ECU 743");
+    if (!sendCommand("ATFCSD300100") || !readResponse(500)) {
+      ESP_LOGW(TAG, "Failed to send/set Flow Control Data '300100' for ECU 743");
+    }
+    if (!sendCommand("0210C0") || !readResponse(1000)) { // Таймаут побольше для "mystery" команды
+      ESP_LOGW(TAG, "No response to Mystery Command '0210C0' for ECU 743");
+    }
+  }
     if (!sendCommand(pid) || !readResponse(1000)) {
-      ESP_LOGW(TAG, "Retry %d: No response to PID: %s", i + 1, pid);
-      continue;
+      ESP_LOGW(TAG, "Retry %d: No response to PID: %s", pid);
+//      ESP_LOGW(TAG, "Retry %d: No response to PID: %s", i + 1, pid);
+//      continue;
     }
-    if (strstr(response_buffer_, "NO DATA") || strstr(response_buffer_, "7F") || strstr(response_buffer_, "CAN ERROR")) {
-      ESP_LOGW(TAG, "Retry %d: Invalid response for PID: %s, response: %s", i + 1, pid, response_buffer_);
-      continue;
+  // --- Специальная инициализация для ECU 743 ---
+  // Проверяем, является ли текущий ECU целевым (743)
+  if (strcmp(ecu, "79B") == 0) {
+    ESP_LOGD(TAG, "Performing special initialization for ECU 79B");
+    if (!sendCommand("ATFCSD300000") || !readResponse(500)) {
+      ESP_LOGW(TAG, "Failed to send/set Flow Control Data '300000' for ECU 79B");
+    }
+    if (!sendCommand("0210C0") || !readResponse(1000)) { // Таймаут побольше для "mystery" команды
+      ESP_LOGW(TAG, "No response to Mystery Command '0210C0' for ECU 79B");
+    }
+  }
+    if (!sendCommand(pid) || !readResponse(1000)) {
+      ESP_LOGW(TAG, "Retry %d: No response to PID: %s", pid);
+//      ESP_LOGW(TAG, "Retry %d: No response to PID: %s", i + 1, pid);
+//      continue;
+    }
+//    if (strstr(response_buffer_, "NO DATA") || strstr(response_buffer_, "7F") || strstr(response_buffer_, "CAN ERROR")) {
+// ищет 7F, и естественно в многострочном ответе находит его. Надо проверять на конкретном месте. Потом переделаю, а пока убрал проверку.
+    if (strstr(response_buffer_, "NO DATA") || strstr(response_buffer_, "CAN ERROR")) {
+      ESP_LOGW(TAG, "Retry %d: Invalid response for PID: %s, response: %s", pid, response_buffer_);
+//      ESP_LOGW(TAG, "Retry %d: Invalid response for PID: %s, response: %s", i + 1, pid, response_buffer_);
+//      continue;
     }
     ESP_LOGD(TAG, "UDS response: %s", response_buffer_);
     return true;
-  }
-  ESP_LOGE(TAG, "Failed UDS query after %d retries: ECU=%s, PID=%s", retries, ecu, pid);
-  return false;
+//  }
+//  ESP_LOGE(TAG, "Failed UDS query after %d retries: ECU=%s, PID=%s", retries, ecu, pid);
+//  return false;
 }
 
 void LeafObdComponent::setup() {
@@ -364,7 +398,7 @@ void LeafObdComponent::setup() {
 }
 
 void LeafObdComponent::update() {
-  static int state = 0;
+  static int state = 0; // Есть 4 состояния: 0 - проверрка состояния, 1 - Запрос Voltage, Temp, SOH, AHr, 2 - Запрос Odometer, 3 - Запрос Number of quick charges / L1/L2 charges
   ESP_LOGD(TAG, "Updating Leaf OBD data (state=%d)...", state);
 
   switch (state) {
@@ -394,9 +428,9 @@ void LeafObdComponent::update() {
       state = 1;
       break;
 
-    case 2: // Другой запрос (переделать)
+    case 3: // 3 - Запрос Number of quick charges / L1/L2 charges
       if (soc_ && elm_.connected()) {
-        if (elm_.queryUDS("797", "02215D")) { // Заменен PID
+        if (elm_.queryUDS("797", "02215D")) { // 797 - VCM
           const char* buffer = elm_.get_response_buffer();
           if (strlen(buffer) >= 13 && strstr(buffer, "79A") && !strstr(buffer, "7F")) {
             char soc_hex[5];
@@ -420,11 +454,11 @@ void LeafObdComponent::update() {
           ESP_LOGW(TAG, "Failed to query SOC");
         }
       }
-      state = 3;
+      state = 0;
       break;
 
     case 1: // Запрос Voltage, Temp, SOH, AHr
-      if (elm_.connected() && elm_.setECU("79B")) {
+      if (elm_.connected() && elm_.setECU("79B")) {       // 79B - LBC(BMS)
 
         if (elm_.queryUDS("79B", "022101")) {
 
@@ -627,9 +661,89 @@ ESP_LOGD(TAG, "Finished processing 022101 response for ECU 79B");
       state = 2;
       break;
 
-    case 3: // Запрос Odometer 
+    case 2: // Запрос Odometer
+
+if (odometer_ && elm_.connected()) {
+    if (elm_.queryUDS("743", "022101")) {  // 743 - M&A (Meter)
+        const char* raw_response = elm_.get_response_buffer();
+        int response_len = strlen(raw_response);
+
+        ESP_LOGD(TAG, "Raw Odometer response: %s", raw_response);
+
+        // --- Определение смещения данных одометра ---
+        // Ответ на 022110 к 743 (ID 763) может быть многофреймовым.
+        // Пример: "76310826101000000007632100000001A7BE00"
+        // Структура:
+        // 7631082 - First Frame header (ID 763, PCI 10, Length 82 hex = 130 dec? или 0x08 0x2?)
+        //           Или 763 1 0 82 -> 763 (ID), 1 (First Frame), 08 (Length High), 2 (Length Low) -> Длина 0x82 = 130 байт.
+        //           Но в примере длина данных в FF = 6 байт (12 hex символов). Пересмотр.
+        // Правильнее: 763 10 82 -> 763 (ID), 10 (PCI: First Frame, Length Low 0), 8 (Length High 8) -> Длина 0x08 = 8 байт данных.
+        // 610100000000 - Данные First Frame (Mode 61, PID 01, 6 байт данных: 00 00 00 00 00 00)
+        // 7632100 - Consecutive Frame 1 header (ID 763, PCI 21, Sequence 0)
+        // 00000001A7BE00 - Данные CF1 (7 байт: 00 00 00 01 A7 BE 00)
+        //
+        // Общая структура данных ответа: [61 01 00 00 00 00] [00 00 00 01 A7 BE 00]
+        // Индексы данных:                [ 0  1  2  3  4  5] [ 6  7  8  9 10 11 12]
+        // struct.unpack(">I", b'\x00\x01\xA7\xBE')[0] = 0x0001A7BE = 108478. Подходит!
+        // Значит, нам нужны байты данных с индексами 7, 8, 9, 10.
+        // В hex-строке "76310826101000000007632100000001A7BE00"
+        //               76310826101000000007632100000001A7F000
+        // Данные FF "00000000" (символы 13-20)
+        // Данные CF1 "00000001A7BE00" (символы 29-42)
+        // Байт d[7]=00 (символ 29,30), d[8]=01 (символ 31,32), d[9]=A7 (символ 33,34), d[10]=BE (символ 35,36)
+        // Нам нужны символы 31,32,33,34,35,36,37,38 -> "0001A7BE" (8 hex символов)
+        const int ODO_HEX_START_INDEX = 28; // Жестко заданное смещение для начала 4 байт данных
+        const int ODO_HEX_LENGTH = 8;       // 4 байта = 8 hex символов
+
+        if (response_len > (ODO_HEX_START_INDEX + ODO_HEX_LENGTH - 1)) {
+            // --- Использование массива char вместо std::string ---
+            // Создаем временный массив char для хранения 8 hex символов + завершающий ноль
+            char odo_hex_chars[9]; // 8 символов + '\0'
+
+            // Копируем 8 символов из raw_response, начиная с ODO_HEX_START_INDEX
+            // strncpy копирует ровно n символов, не добавляя '\0' автоматически, если в источнике нет '\0'
+            strncpy(odo_hex_chars, raw_response + ODO_HEX_START_INDEX, ODO_HEX_LENGTH);
+
+            // Вручную завершаем строку нулевым символом
+            odo_hex_chars[ODO_HEX_LENGTH] = '\0';
+
+            ESP_LOGD(TAG, "Extracted Odometer hex chars (4 bytes): %s", odo_hex_chars);
+
+            // --- Преобразование 4 байт hex-строки в число ---
+            char* endptr;
+            // Используем strtoul для преобразования 4-байтного hex значения
+            // Проверяем, что вся строка была преобразована успешно
+            unsigned long odo_raw = strtoul(odo_hex_chars, &endptr, 16);
+
+            if (*endptr == '\0' && odo_raw <= 0xFFFFFFFF) { // Проверка корректности
+                // odo_raw теперь содержит значение 0x0001A7BE = 108478
+                float odometer_val = static_cast<float>(odo_raw); // 108478.0
+
+                odometer_->publish_state(odometer_val);
+                ESP_LOGD(TAG, "Odometer (4 bytes, char array): %.0f km", odometer_val);
+            } else {
+                ESP_LOGW(TAG, "Failed to convert Odometer hex chars '%s'", odo_hex_chars);
+                odometer_->publish_state(NAN);
+            }
+        } else {
+            ESP_LOGW(TAG, "Odometer response too short to extract 4-byte data at expected offset: %s", raw_response);
+            odometer_->publish_state(NAN);
+        }
+
+    } else {
+        ESP_LOGW(TAG, "Failed to query Odometer");
+        odometer_->publish_state(NAN);
+    }
+}
+
+
+
+
+
+
+/*
       if (odometer_ && elm_.connected()) {
-        if (elm_.queryUDS("743", "022110")) {
+        if (elm_.queryUDS("743", "022110")) {  // 743 - M&A (Meter)
           const char* buffer = elm_.get_response_buffer();
           if (strlen(buffer) >= 15 && strstr(buffer, "763") && !strstr(buffer, "7F")) {
             char odo_hex[5];
@@ -653,7 +767,9 @@ ESP_LOGD(TAG, "Finished processing 022101 response for ECU 79B");
           ESP_LOGW(TAG, "Failed to query Odometer");
         }
       }
-      state = 0;
+*/
+
+      state = 3;
       break;
   }
 }
