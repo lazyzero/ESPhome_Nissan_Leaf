@@ -117,14 +117,14 @@ bool ELM327::begin(Stream &stream) {
   // Полная инициализация как в LeafSpy
   if (!sendCommand("ATZ") || !readResponse(1300)) return false; // Сброс
   if (!sendCommand("ATE0") || !readResponse(250)) return false;  // Отключить эхо
-  if (!sendCommand("ATL0") || !readResponse(200)) return false;  // Отключить перевод строк
+  if (!sendCommand("ATL0") || !readResponse(250)) return false;  // Отключить перевод строк
   if (!sendCommand("ATSP6") || !readResponse(250)) return false; // CAN 500 кбит/с
-  if (!sendCommand("ATH1") || !readResponse(200)) return false;  // Включить заголовки
-  if (!sendCommand("ATS0") || !readResponse(200)) return false;  // Отключить пробелы
-  if (!sendCommand("ATCAF0") || !readResponse(200)) return false; // Отключить автоформатирование
-  if (!sendCommand("ATSH797") || !readResponse(200)) return false;  // Set Header to 
-  if (!sendCommand("ATFCSH797") || !readResponse(200)) return false;  // FC, Set the Header to 
-  if (!sendCommand("ATFCSD300000") || !readResponse(200)) return false;  // FC, Set Data to [...]
+  if (!sendCommand("ATH1") || !readResponse(250)) return false;  // Включить заголовки
+  if (!sendCommand("ATS0") || !readResponse(250)) return false;  // Отключить пробелы
+  if (!sendCommand("ATCAF0") || !readResponse(250)) return false; // Отключить автоформатирование
+  if (!sendCommand("ATSH797") || !readResponse(250)) return false;  // Set Header to 
+  if (!sendCommand("ATFCSH797") || !readResponse(250)) return false;  // FC, Set the Header to 
+  if (!sendCommand("ATFCSD300000") || !readResponse(250)) return false;  // FC, Set Data to [...]
 // команды ATFCSH и ATFCSD обязательно должны идти перед ATFCSM1
   if (!sendCommand("ATFCSM1") || !readResponse(300)) return false;  // Flow Control, Set the Mode to 
   if (!sendCommand("0210C0") || !readResponse(500)) return false; // Mystery command
@@ -170,6 +170,7 @@ bool ELM327::isCarResponsive() {
 
   float voltage = atof(response_buffer_);
   if (voltage > 12.8) {
+//  if (voltage > 11.8) {  // По напряжению определяем включена ли машина. Временно занижал, чтобы посмотреть, что там отвечает
     ESP_LOGD(TAG, "ATRV voltage: %.2fV. Car is on.", voltage);
     return true;
   }
@@ -311,22 +312,7 @@ bool ELM327::setECU(const char *ecu) {
     ESP_LOGE(TAG, "Invalid response to %s: %s", cmd, response_buffer_);
     return false;
   }
-  return true;
-}
 
-bool ELM327::connected() {
-  return is_connected_ && elm_stream_ != nullptr;
-}
-
-bool ELM327::queryUDS(const char *ecu, const char *pid, int retries) {
-//  for (int i = 0; i < retries; i++) {
-// Убираем несколько переподключений, так как в коде это не используется, да и лишние задержки
-    response_buffer_[0] = '\0';
-    if (!setECU(ecu)) {
-      ESP_LOGW(TAG, "Retry %d: Failed to set ECU: %s", ecu);
-//      ESP_LOGW(TAG, "Retry %d: Failed to set ECU: %s", i + 1, ecu);
-//      continue;
-    }
   // --- Специальная инициализация для ECU 743 ---
   // Проверяем, является ли текущий ECU целевым (743)
   if (strcmp(ecu, "743") == 0) {
@@ -338,14 +324,9 @@ bool ELM327::queryUDS(const char *ecu, const char *pid, int retries) {
       ESP_LOGW(TAG, "No response to Mystery Command '0210C0' for ECU 743");
     }
   }
-    if (!sendCommand(pid) || !readResponse(1000)) {
-      ESP_LOGW(TAG, "Retry %d: No response to PID: %s", pid);
-//      ESP_LOGW(TAG, "Retry %d: No response to PID: %s", i + 1, pid);
-//      continue;
-    }
-  // --- Специальная инициализация для ECU 743 ---
-  // Проверяем, является ли текущий ECU целевым (743)
-  if (strcmp(ecu, "79B") == 0) {
+  // --- Специальная инициализация для ECU 79B ---
+  // Проверяем, является ли текущий ECU целевым (79B)
+  if (strcmp(ecu, "79B") == 0 || strcmp(ecu, "797") == 0) {
     ESP_LOGD(TAG, "Performing special initialization for ECU 79B");
     if (!sendCommand("ATFCSD300000") || !readResponse(500)) {
       ESP_LOGW(TAG, "Failed to send/set Flow Control Data '300000' for ECU 79B");
@@ -354,15 +335,33 @@ bool ELM327::queryUDS(const char *ecu, const char *pid, int retries) {
       ESP_LOGW(TAG, "No response to Mystery Command '0210C0' for ECU 79B");
     }
   }
+
+
+  return true;
+}
+
+bool ELM327::connected() {
+  return is_connected_ && elm_stream_ != nullptr;
+}
+
+bool ELM327::queryUDS(const char *ecu, const char *pid, int retries) {
+//  for (int i = 0; i < retries; i++) {
+// Убираем несколько переподключений, так как в коде это не используется, да и лишние задержки
+    response_buffer_[0] = '\0';
+/*    if (!setECU(ecu)) {
+      ESP_LOGW(TAG, "Retry %d: Failed to set ECU: %s", ecu);
+//      ESP_LOGW(TAG, "Retry %d: Failed to set ECU: %s", i + 1, ecu);
+//      continue;
+    }*/
     if (!sendCommand(pid) || !readResponse(1000)) {
-      ESP_LOGW(TAG, "Retry %d: No response to PID: %s", pid);
+      ESP_LOGW(TAG, "No response to PID: %s", pid);
 //      ESP_LOGW(TAG, "Retry %d: No response to PID: %s", i + 1, pid);
 //      continue;
     }
 //    if (strstr(response_buffer_, "NO DATA") || strstr(response_buffer_, "7F") || strstr(response_buffer_, "CAN ERROR")) {
 // ищет 7F, и естественно в многострочном ответе находит его. Надо проверять на конкретном месте. Потом переделаю, а пока убрал проверку.
     if (strstr(response_buffer_, "NO DATA") || strstr(response_buffer_, "CAN ERROR")) {
-      ESP_LOGW(TAG, "Retry %d: Invalid response for PID: %s, response: %s", pid, response_buffer_);
+      ESP_LOGW(TAG, "Invalid response for PID: %s, response: %s", pid, response_buffer_);
 //      ESP_LOGW(TAG, "Retry %d: Invalid response for PID: %s, response: %s", i + 1, pid, response_buffer_);
 //      continue;
     }
@@ -399,6 +398,8 @@ void LeafObdComponent::setup() {
 
 void LeafObdComponent::update() {
   static int state = 0; // Есть 4 состояния: 0 - проверрка состояния, 1 - Запрос Voltage, Temp, SOH, AHr, 2 - Запрос Odometer, 3 - Запрос Number of quick charges / L1/L2 charges
+const char* raw_response;
+int response_len;
   ESP_LOGD(TAG, "Updating Leaf OBD data (state=%d)...", state);
 
   switch (state) {
@@ -428,7 +429,381 @@ void LeafObdComponent::update() {
       state = 1;
       break;
 
-    case 3: // 3 - Запрос Number of quick charges / L1/L2 charges
+    case 1: // 1 - Запрос Number of quick charges / L1/L2 charges и т.д. 
+// --- power_switch ---
+// PID: 03221304, ECU: 797, Response example: 79A0762130480BA00000
+// Decoders.py: d[3] & 0x80 == 0x80 -> true/false
+      if (elm_.connected() && elm_.setECU("797")) {        // 797 - VCM
+
+
+if (power_switch_ && elm_.connected()) {
+    if (elm_.queryUDS("797", "03221304")) {
+        // const char* raw_response = elm_.get_response_buffer();
+        raw_response = elm_.get_response_buffer(); // уже объявлено
+        // int response_len = strlen(raw_response);
+        response_len = strlen(raw_response); // уже объявлено
+        // Проверка длины и префикса
+        if (response_len >= 14 && strncmp(raw_response, "79A", 3) == 0) {
+            // Байт данных d[3] находится по индексу 9 в строке "79A07621304..."
+                char ps_hex[3] = {raw_response[11], raw_response[12], '\0'};
+                char* endptr;
+                long ps_raw = strtol(ps_hex, &endptr, 16);
+                if (*endptr == '\0') {
+                    bool ps_val = (ps_raw & 0x80) == 0x80;
+                    power_switch_->publish_state(ps_val);
+                    ESP_LOGD(TAG, "Power Switch: %s (raw hex: %s)", ps_val ? "ON" : "OFF", ps_hex);
+                } else {
+                    ESP_LOGW(TAG, "Failed to parse Power Switch hex: %s", ps_hex);
+                    power_switch_->publish_state(NAN); // Или false, в зависимости от типа сенсора
+                }
+        } else {
+            ESP_LOGW(TAG, "Invalid Power Switch response format: %s", raw_response);
+            power_switch_->publish_state(NAN);
+        }
+    } else {
+        ESP_LOGW(TAG, "Failed to query Power Switch");
+        power_switch_->publish_state(NAN);
+    }
+}
+
+// --- bat_12v_voltage ---
+// PID: 03221103, ECU: 797, Response example: 79A07621103A4030000 (A4 = 164 -> 164*0.08=13.12V)
+// Decoders.py: d[3] * 0.08
+if (bat_12v_voltage_ && elm_.connected()) {
+    if (elm_.queryUDS("797", "03221103")) {
+        // const char* raw_response = elm_.get_response_buffer();
+        raw_response = elm_.get_response_buffer(); // уже объявлено
+        // int response_len = strlen(raw_response);
+        response_len = strlen(raw_response); // уже объявлено
+        if (response_len >= 14 && strncmp(raw_response, "79A", 3) == 0) {
+                char v12_hex[3] = {raw_response[11], raw_response[12], '\0'};
+                char* endptr;
+                long v12_raw = strtol(v12_hex, &endptr, 16);
+                if (*endptr == '\0') {
+                    float v12_val = static_cast<float>(v12_raw) * 0.08f;
+                    bat_12v_voltage_->publish_state(v12_val);
+                    ESP_LOGD(TAG, "12V Battery Voltage: %.2fV (raw hex: %s)", v12_val, v12_hex);
+                } else {
+                    ESP_LOGW(TAG, "Failed to parse 12V Voltage hex: %s", v12_hex);
+                    bat_12v_voltage_->publish_state(NAN);
+                }
+        } else {
+            ESP_LOGW(TAG, "Invalid 12V Voltage response format: %s", raw_response);
+            bat_12v_voltage_->publish_state(NAN);
+        }
+    } else {
+        ESP_LOGW(TAG, "Failed to query 12V Voltage");
+        bat_12v_voltage_->publish_state(NAN);
+    }
+}
+
+// --- bat_12v_current ---
+// PID: 03221183, ECU: 797, Response example: 79A0762118388B8FFFD
+//                                            79A07621183819BFFFF
+// Decoders.py: struct.unpack("!h", d[3:5])[0] / 256
+// "!h" означает signed short, big-endian. d[3]=0x88, d[4]=0xB8 -> 0x88B8 -> signed -30536 -> /256 = -119.28 A
+if (bat_12v_current_ && elm_.connected()) {
+    if (elm_.queryUDS("797", "03221183")) {
+        // const char* raw_response = elm_.get_response_buffer();
+        raw_response = elm_.get_response_buffer(); // уже объявлено
+        // int response_len = strlen(raw_response);
+        response_len = strlen(raw_response); // уже объявлено
+        if (response_len >= 14 && strncmp(raw_response, "79A", 3) == 0) {
+                char i12_hex[5] = {raw_response[11], raw_response[12], raw_response[13], raw_response[14], '\0'};
+                char* endptr;
+                // Используем strtol для преобразования 4 hex символов (2 байта) в long
+                // Затем приводим к signed short (int16_t)
+                long i12_raw_long = strtol(i12_hex, &endptr, 16);
+                if (*endptr == '\0') {
+                    // Приведение к int16_t для правильной обработки знака
+                    int16_t i12_raw = static_cast<int16_t>(i12_raw_long);
+                    float i12_val = static_cast<float>(i12_raw) / 256.0f;
+                    bat_12v_current_->publish_state(i12_val);
+                    ESP_LOGD(TAG, "12V Battery Current: %.2fA (raw hex: %s)", i12_val, i12_hex);
+                } else {
+                    ESP_LOGW(TAG, "Failed to parse 12V Current hex: %s", i12_hex);
+                    bat_12v_current_->publish_state(NAN);
+                }
+        } else {
+            ESP_LOGW(TAG, "Invalid 12V Current response format: %s", raw_response);
+            bat_12v_current_->publish_state(NAN);
+        }
+    } else {
+        ESP_LOGW(TAG, "Failed to query 12V Current");
+        bat_12v_current_->publish_state(NAN);
+    }
+}
+
+// --- quick_charges ---
+// PID: 03221203, ECU: 797, Response example: 79A076212030013FFFF (0013 = 19)
+// Decoders.py: int.from_bytes(d[3:5])
+if (quick_charges_ && elm_.connected()) {
+    if (elm_.queryUDS("797", "03221203")) {
+        //const char* raw_response = elm_.get_response_buffer();
+        raw_response = elm_.get_response_buffer(); // уже объявлено
+        // int response_len = strlen(raw_response);
+        response_len = strlen(raw_response); // уже объявлено
+        if (response_len >= 15 && strncmp(raw_response, "79A", 3) == 0) {
+                char qc_hex[5] = {raw_response[11], raw_response[12], raw_response[13], raw_response[14], '\0'};
+                char* endptr;
+                long qc_raw = strtol(qc_hex, &endptr, 16);
+                if (*endptr == '\0' && qc_raw >= 0 && qc_raw <= 0xFFFF) {
+                    // unsigned int 16 bit
+                    uint16_t qc_val = static_cast<uint16_t>(qc_raw);
+                    quick_charges_->publish_state(static_cast<float>(qc_val));
+                    ESP_LOGD(TAG, "Quick Charges: %u (raw hex: %s)", qc_val, qc_hex);
+                } else {
+                    ESP_LOGW(TAG, "Failed to parse Quick Charges hex: %s", qc_hex);
+                    quick_charges_->publish_state(NAN);
+                }
+        } else {
+            ESP_LOGW(TAG, "Invalid Quick Charges response format: %s", raw_response);
+            quick_charges_->publish_state(NAN);
+        }
+    } else {
+        ESP_LOGW(TAG, "Failed to query Quick Charges");
+        quick_charges_->publish_state(NAN);
+    }
+}
+
+// --- l1_l2_charges ---
+// PID: 03221205, ECU: 797, Response example: 79A076212050F00FFFF (0F00 = 3840)
+// Decoders.py: int.from_bytes(d[3:5])
+if (l1_l2_charges_ && elm_.connected()) {
+    if (elm_.queryUDS("797", "03221205")) {
+        // const char* raw_response = elm_.get_response_buffer();
+        raw_response = elm_.get_response_buffer(); // уже объявлено
+        // int response_len = strlen(raw_response);
+        response_len = strlen(raw_response); // уже объявлено
+        if (response_len >= 14 && strncmp(raw_response, "79A", 3) == 0) {
+            if (response_len > 12) {
+                char l12c_hex[5] = {raw_response[11], raw_response[12], raw_response[13], raw_response[14], '\0'};
+                char* endptr;
+                long l12c_raw = strtol(l12c_hex, &endptr, 16);
+                if (*endptr == '\0' && l12c_raw >= 0 && l12c_raw <= 0xFFFF) {
+                    uint16_t l12c_val = static_cast<uint16_t>(l12c_raw);
+                    l1_l2_charges_->publish_state(static_cast<float>(l12c_val));
+                    ESP_LOGD(TAG, "L1/L2 Charges: %u (raw hex: %s)", l12c_val, l12c_hex);
+                } else {
+                    ESP_LOGW(TAG, "Failed to parse L1/L2 Charges hex: %s", l12c_hex);
+                    l1_l2_charges_->publish_state(NAN);
+                }
+            } else {
+                ESP_LOGW(TAG, "Response too short for L1/L2 Charges");
+                l1_l2_charges_->publish_state(NAN);
+            }
+        } else {
+            ESP_LOGW(TAG, "Invalid L1/L2 Charges response format: %s", raw_response);
+            l1_l2_charges_->publish_state(NAN);
+        }
+    } else {
+        ESP_LOGW(TAG, "Failed to query L1/L2 Charges");
+        l1_l2_charges_->publish_state(NAN);
+    }
+}
+
+// --- ambient_temp ---
+// PID: 0322115D, ECU: 797, Response example: 79A0762115D743A7400 (74 = 116 -> 116/2-40 = 18C)
+// Decoders.py: d[3] / 2 - 40
+
+if (ambient_temp_ && elm_.connected()) {
+    if (elm_.queryUDS("797", "0322115D")) {
+        // const char* raw_response = elm_.get_response_buffer();
+        raw_response = elm_.get_response_buffer(); // уже объявлено
+        // int response_len = strlen(raw_response);
+        response_len = strlen(raw_response); // уже объявлено
+        if (response_len >= 11 && strncmp(raw_response, "79A", 3) == 0) {
+                char at_hex[3] = {raw_response[11], raw_response[12], '\0'};
+                char* endptr;
+                long at_raw = strtol(at_hex, &endptr, 16);
+                if (*endptr == '\0') {
+                    float at_val = static_cast<float>(at_raw) / 2.0f - 40.0f;
+                    ambient_temp_->publish_state(at_val);
+                    ESP_LOGD(TAG, "Ambient Temperature: %.1f°C (raw hex: %s)", at_val, at_hex);
+                } else {
+                    ESP_LOGW(TAG, "Failed to parse Ambient Temp hex: %s", at_hex);
+                    ambient_temp_->publish_state(NAN);
+                }
+        } else {
+            ESP_LOGW(TAG, "Invalid Ambient Temp response format: %s", raw_response);
+            ambient_temp_->publish_state(NAN);
+        }
+    } else {
+        ESP_LOGW(TAG, "Failed to query Ambient Temp");
+        ambient_temp_->publish_state(NAN);
+    }
+}
+
+// --- estimated_ac_power ---
+// PID: 03221261, ECU: 797, Response example: 79A0762126100010003 (00 = 0 -> 0*50=0W)
+// Decoders.py: d[3] * 50
+if (estimated_ac_power_ && elm_.connected()) {
+    if (elm_.queryUDS("797", "03221261")) {
+        // const char* raw_response = elm_.get_response_buffer();
+        raw_response = elm_.get_response_buffer(); // уже объявлено
+        // int response_len = strlen(raw_response);
+        response_len = strlen(raw_response); // уже объявлено
+        if (response_len >= 14 && strncmp(raw_response, "79A", 3) == 0) {
+                char eac_hex[3] = {raw_response[11], raw_response[12], '\0'};
+                char* endptr;
+                long eac_raw = strtol(eac_hex, &endptr, 16);
+                if (*endptr == '\0') {
+                    float eac_val = static_cast<float>(eac_raw) * 50.0f;
+                    estimated_ac_power_->publish_state(eac_val);
+                    ESP_LOGD(TAG, "Estimated AC Power: %.0fW (raw hex: %s)", eac_val, eac_hex);
+                } else {
+                    ESP_LOGW(TAG, "Failed to parse Estimated AC Power hex: %s", eac_hex);
+                    estimated_ac_power_->publish_state(NAN);
+                }
+        } else {
+            ESP_LOGW(TAG, "Invalid Estimated AC Power response format: %s", raw_response);
+            estimated_ac_power_->publish_state(NAN);
+        }
+    } else {
+        ESP_LOGW(TAG, "Failed to query Estimated AC Power");
+        estimated_ac_power_->publish_state(NAN);
+    }
+}
+
+// --- aux_power ---
+// PID: 03221152, ECU: 797, Response example: 79A0762115202190101 (02 = 2 -> 2*100=200W)
+// Decoders.py: d[3] * 100
+if (aux_power_ && elm_.connected()) {
+    if (elm_.queryUDS("797", "03221152")) {
+        // const char* raw_response = elm_.get_response_buffer();
+        raw_response = elm_.get_response_buffer(); // уже объявлено
+        // int response_len = strlen(raw_response);
+        response_len = strlen(raw_response); // уже объявлено
+        if (response_len >= 14 && strncmp(raw_response, "79A", 3) == 0) {
+                char aux_hex[3] = {raw_response[11], raw_response[12], '\0'};
+                char* endptr;
+                long aux_raw = strtol(aux_hex, &endptr, 16);
+                if (*endptr == '\0') {
+                    float aux_val = static_cast<float>(aux_raw) * 100.0f;
+                    aux_power_->publish_state(aux_val);
+                    ESP_LOGD(TAG, "Auxiliary Power: %.0fW (raw hex: %s)", aux_val, aux_hex);
+                } else {
+                    ESP_LOGW(TAG, "Failed to parse Auxiliary Power hex: %s", aux_hex);
+                    aux_power_->publish_state(NAN);
+                }
+        } else {
+            ESP_LOGW(TAG, "Invalid Auxiliary Power response format: %s", raw_response);
+            aux_power_->publish_state(NAN);
+        }
+    } else {
+        ESP_LOGW(TAG, "Failed to query Auxiliary Power");
+        aux_power_->publish_state(NAN);
+    }
+}
+
+// --- ac_power ---
+// PID: 03221151, ECU: 797, Response example: 79A0762115100000037 (00 = 0 -> 0*250=0W)
+// Decoders.py: d[3] * 250
+if (ac_power_ && elm_.connected()) {
+    if (elm_.queryUDS("797", "03221151")) {
+        // const char* raw_response = elm_.get_response_buffer();
+        raw_response = elm_.get_response_buffer(); // уже объявлено
+        // int response_len = strlen(raw_response);
+        response_len = strlen(raw_response); // уже объявлено
+        if (response_len >= 14 && strncmp(raw_response, "79A", 3) == 0) {
+                char acp_hex[3] = {raw_response[11], raw_response[12], '\0'};
+                char* endptr;
+                long acp_raw = strtol(acp_hex, &endptr, 16);
+                if (*endptr == '\0' && acp_raw >= 0 && acp_raw <= 0xFF) {
+                    float acp_val = static_cast<float>(acp_raw) * 250.0f;
+                    ac_power_->publish_state(acp_val);
+                    ESP_LOGD(TAG, "AC System Power: %.0fW (raw hex: %s)", acp_val, acp_hex);
+                } else {
+                    ESP_LOGW(TAG, "Failed to parse AC Power hex: %s", acp_hex);
+                    ac_power_->publish_state(NAN);
+                }
+        } else {
+            ESP_LOGW(TAG, "Invalid AC Power response format: %s", raw_response);
+            ac_power_->publish_state(NAN);
+        }
+    } else {
+        ESP_LOGW(TAG, "Failed to query AC Power");
+        ac_power_->publish_state(NAN);
+    }
+}
+
+// --- plug_state ---
+// PID: 03221234, ECU: 797, Response example: 79A0762123400000A0A (00 = Not plugged)
+// Decoders.py: match d[3]: case 0: "Not plugged", case 1: "Partial plugged", case 2: "Plugged"
+// Предположим, что сенсор `plug_state_` типа `text_sensor::TextSensor`
+if (plug_state_ && elm_.connected()) {
+    if (elm_.queryUDS("797", "03221234")) {
+        // const char* raw_response = elm_.get_response_buffer();
+        raw_response = elm_.get_response_buffer(); // уже объявлено
+        // int response_len = strlen(raw_response);
+        response_len = strlen(raw_response); // уже объявлено
+        if (response_len >= 11 && strncmp(raw_response, "79A", 3) == 0) {
+                char ps_hex[3] = {raw_response[11], raw_response[12], '\0'};
+                char* endptr;
+                long ps_raw = strtol(ps_hex, &endptr, 16);
+                if (*endptr == '\0' && ps_raw >= 0 && ps_raw <= 0xFF) {
+                    std::string ps_val = "Unknown";
+                    switch (ps_raw) {
+                        case 0: ps_val = "Not plugged"; break;
+                        case 1: ps_val = "Partial plugged"; break;
+                        case 2: ps_val = "Plugged"; break;
+                        default: ps_val = "Unknown"; break;
+                    }
+                    plug_state_->publish_state(ps_val);
+                    ESP_LOGD(TAG, "Plug State: %s (raw hex: %s)", ps_val.c_str(), ps_hex);
+                } else {
+                    ESP_LOGW(TAG, "Failed to parse Plug State hex: %s", ps_hex);
+                    plug_state_->publish_state("Error");
+                }
+        } else {
+            ESP_LOGW(TAG, "Invalid Plug State response format: %s", raw_response);
+            plug_state_->publish_state("Error");
+        }
+    } else {
+        ESP_LOGW(TAG, "Failed to query Plug State");
+        plug_state_->publish_state("Error");
+    }
+}
+
+// --- charge_mode ---
+// PID: 0322114E, ECU: 797, Response example: 79A0762114E00001F07 (00 = Not charging)
+// Decoders.py: match d[3]: case 0: "Not charging", case 1: "L1", case 2: "L2", case 3: "L3"
+// Предположим, что сенсор `charge_mode_` типа `text_sensor::TextSensor`
+if (charge_mode_ && elm_.connected()) {
+    if (elm_.queryUDS("797", "0322114E")) {
+        // const char* raw_response = elm_.get_response_buffer();
+        raw_response = elm_.get_response_buffer(); // уже объявлено
+        // int response_len = strlen(raw_response);
+        response_len = strlen(raw_response); // уже объявлено
+        if (response_len >= 14 && strncmp(raw_response, "79A", 3) == 0) {
+                char cm_hex[3] = {raw_response[11], raw_response[12], '\0'};
+                char* endptr;
+                long cm_raw = strtol(cm_hex, &endptr, 16);
+                if (*endptr == '\0') {
+                    std::string cm_val = "Unknown";
+                    switch (cm_raw) {
+                        case 0: cm_val = "Not charging"; break;
+                        case 1: cm_val = "L1 charging"; break;
+                        case 2: cm_val = "L2 charging"; break;
+                        case 3: cm_val = "L3 charging"; break;
+                        default: cm_val = "Unknown"; break;
+                    }
+                    charge_mode_->publish_state(cm_val);
+                    ESP_LOGD(TAG, "Charge Mode: %s (raw hex: %s)", cm_val.c_str(), cm_hex);
+                } else {
+                    ESP_LOGW(TAG, "Failed to parse Charge Mode hex: %s", cm_hex);
+                    charge_mode_->publish_state("Error");
+                }
+        } else {
+            ESP_LOGW(TAG, "Invalid Charge Mode response format: %s", raw_response);
+            charge_mode_->publish_state("Error");
+        }
+    } else {
+        ESP_LOGW(TAG, "Failed to query Charge Mode");
+        charge_mode_->publish_state("Error");
+    }
+}
+/*
       if (soc_ && elm_.connected()) {
         if (elm_.queryUDS("797", "02215D")) { // 797 - VCM
           const char* buffer = elm_.get_response_buffer();
@@ -454,18 +829,21 @@ void LeafObdComponent::update() {
           ESP_LOGW(TAG, "Failed to query SOC");
         }
       }
-      state = 0;
+*/
+      } // от if setECU("797")...
+      state = 2;
       break;
 
-    case 1: // Запрос Voltage, Temp, SOH, AHr
+    case 3: // Запрос Voltage, Temp, SOH, AHr
       if (elm_.connected() && elm_.setECU("79B")) {       // 79B - LBC(BMS)
 
         if (elm_.queryUDS("79B", "022101")) {
 
 
 // Предполагаем, что elm_.queryUDS("79B", "022101") уже был вызван.
-const char* raw_response = elm_.get_response_buffer(); // Или просто response_buffer_
-int response_len = strlen(raw_response);
+// const char* raw_response = elm_.get_response_buffer(); // Или просто response_buffer_
+        raw_response = elm_.get_response_buffer(); // уже объявлено
+int response_len = strlen(raw_response);  // определяем длину полученного ответа
 
 // --- Проверка полученного ответа ---
 // Минимальная длина для First Frame с 6 байтами данных = 19 символов.
@@ -653,20 +1031,117 @@ if (ahr_) {
 
 // ... обработка других параметров ...
 ESP_LOGD(TAG, "Finished processing 022101 response for ECU 79B");
+        }
+
+
+        if (elm_.queryUDS("79B", "022104")) {
+// --- Упрощенная проверка структуры ---
+// Проверяем, достаточно ли длинный ответ и содержит ли он ожидаемые фреймы.
+// Минимальная длина для 3 фреймов:
+// 7BB1010610401B61C017BB21B11C01BC1B01BD7BB221B1B00FFFFFFFF
+// 7BB1010610401D019017BB21D01901D81801D97BB22181800FFFFFFFF
+// 7BB10106104 01 F5 15 01 7BB21 FD 14 01 FF 14 02 03 7BB22 14 14 00 FFFFFFFF
+// 7BB10106104 01 B6 1C 01 7BB21 B1 1C 01 BC 1B 01 BD 7BB22 1B 1B 00 FFFFFFFF
+//                   ^^             ^^       ^^             ^^
+//                 15,16           26,27    32,33          43,44
+
+// FF (7BB10) + 12 hex символов данных + CF1 (7BB21) + 14 символов + CF2 (7BB22) + 14 символов = 
+// (7+12) + (5+14) + (5+14) = 19 + 19 + 19 = 57 символов.
+// Но лучше проверить наличие префиксов.
+
+response_len = strlen(raw_response);  // определяем длину полученного ответа
+if (response_len >= 57 && strncmp(raw_response, "7BB10", 5) == 0) {
+    // --- Извлечение температур напрямую из строки raw_response ---
+    
+    // Температура 1: CF1, данные, байт 7 (индекс 6). 
+    // Данные CF1 начинаются с символа 24 (19 заголовок FF + 5 заголовок CF1).
+    // Индекс символа = 24 + 6 * 2 = 36. Нужны символы 36 и 37.
+        char temp1_hex[3] = {raw_response[12], raw_response[13], '\0'};
+        char* endptr1;
+        long temp1_raw = strtol(temp1_hex, &endptr1, 16);
+        if (*endptr1 == '\0' && temp1_raw >= 0 && temp1_raw <= 0xFF) {
+            float temp1_val = static_cast<float>(temp1_raw);
+            if (battery_temp_1_) {
+                battery_temp_1_->publish_state(temp1_val);
+                ESP_LOGD(TAG, "Battery Temperature 1 (simplified): %.1f°C (hex: %s)", temp1_val, temp1_hex);
+            }
+        } else {
+            ESP_LOGW(TAG, "Failed to parse Battery Temperature 1 hex: %s", temp1_hex);
+            if (battery_temp_1_) battery_temp_1_->publish_state(NAN);
+        }
+
+    // Температура 2: CF1, данные, байт 3 (индекс 2).
+    // Индекс символа = 24 + 2 * 2 = 28. Нужны символы 28 и 29.
+        char temp2_hex[3] = {raw_response[26], raw_response[27], '\0'};
+        char* endptr2;
+        long temp2_raw = strtol(temp2_hex, &endptr2, 16);
+        if (*endptr2 == '\0' && temp2_raw >= 0 && temp2_raw <= 0xFF) {
+            float temp2_val = static_cast<float>(temp2_raw);
+            if (battery_temp_2_) {
+                battery_temp_2_->publish_state(temp2_val);
+                ESP_LOGD(TAG, "Battery Temperature 2 (simplified): %.1f°C (hex: %s)", temp2_val, temp2_hex);
+            }
+        } else {
+            ESP_LOGW(TAG, "Failed to parse Battery Temperature 2 hex: %s", temp2_hex);
+            if (battery_temp_2_) battery_temp_2_->publish_state(NAN);
+        }
+
+    // Температура 3: CF1, данные, байт 6 (индекс 5).
+    // Индекс символа = 24 + 5 * 2 = 34. Нужны символы 34 и 35.
+        char temp3_hex[3] = {raw_response[32], raw_response[33], '\0'};
+        char* endptr3;
+        long temp3_raw = strtol(temp3_hex, &endptr3, 16);
+        if (*endptr3 == '\0' && temp3_raw >= 0 && temp3_raw <= 0xFF) {
+            float temp3_val = static_cast<float>(temp3_raw);
+            if (battery_temp_3_) {
+                battery_temp_3_->publish_state(temp3_val);
+                ESP_LOGD(TAG, "Battery Temperature 3 (simplified): %.1f°C (hex: %s)", temp3_val, temp3_hex);
+            }
+        } else {
+            ESP_LOGW(TAG, "Failed to parse Battery Temperature 3 hex: %s", temp3_hex);
+            if (battery_temp_3_) battery_temp_3_->publish_state(NAN);
+        }
+
+    // Температура 4: CF2, данные, байт 3 (индекс 2).
+    // Данные CF2 начинаются с символа 43 (19 FF + 19 CF1 + 5 заголовок CF2).
+    // Индекс символа = 43 + 2 * 2 = 47. Нужны символы 47 и 48.
+        char temp4_hex[3] = {raw_response[43], raw_response[44], '\0'};
+        char* endptr4;
+        long temp4_raw = strtol(temp4_hex, &endptr4, 16);
+        if (*endptr4 == '\0' && temp4_raw >= 0 && temp4_raw <= 0xFF) {
+            float temp4_val = static_cast<float>(temp4_raw);
+            if (battery_temp_4_) {
+                battery_temp_4_->publish_state(temp4_val);
+                ESP_LOGD(TAG, "Battery Temperature 4 (simplified): %.1f°C (hex: %s)", temp4_val, temp4_hex);
+            }
+        } else {
+            ESP_LOGW(TAG, "Failed to parse Battery Temperature 4 hex: %s", temp4_hex);
+            if (battery_temp_4_) battery_temp_4_->publish_state(NAN);
+        }
+
+} else {
+    ESP_LOGW(TAG, "Invalid or incomplete Battery Temperature response structure for 022104: %s", raw_response);
+    if (battery_temp_1_) battery_temp_1_->publish_state(NAN);
+    if (battery_temp_2_) battery_temp_2_->publish_state(NAN);
+    if (battery_temp_3_) battery_temp_3_->publish_state(NAN);
+    if (battery_temp_4_) battery_temp_4_->publish_state(NAN);
+}
+
 
 
         }
-
       }
-      state = 2;
+      state = 0;
       break;
 
     case 2: // Запрос Odometer
 
-if (odometer_ && elm_.connected()) {
+if (odometer_ ) {
+      if (elm_.connected() && elm_.setECU("743")) {       // 743 - M&A (Meter)
+
     if (elm_.queryUDS("743", "022101")) {  // 743 - M&A (Meter)
-        const char* raw_response = elm_.get_response_buffer();
-        int response_len = strlen(raw_response);
+        raw_response = elm_.get_response_buffer(); // уже объявлено
+        response_len = strlen(raw_response);
 
         ESP_LOGD(TAG, "Raw Odometer response: %s", raw_response);
 
@@ -768,7 +1243,7 @@ if (odometer_ && elm_.connected()) {
         }
       }
 */
-
+      } // от if setECU("743")
       state = 3;
       break;
   }
