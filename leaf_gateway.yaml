@@ -23,6 +23,11 @@ api:
 ota:
   platform: esphome
 
+# Включаем встроенный web-сервр для отладки
+web_server:
+  port: 80
+  local: true
+
 external_components:
   - source:
       type: local
@@ -80,6 +85,36 @@ leaf_obd_uart:
     icon: "mdi:counter"
     accuracy_decimals: 0
     device_class: distance
+  bat_12v_voltage:
+    name: "Leaf Battery 12V voltage"
+  bat_12v_current:
+    name: "Leaf Battery 12V current"
+  quick_charges:
+    name: "Leaf Battery QC"
+  l1_l2_charges:
+    name: "Leaf Battery L1/L2"
+  ambient_temp:
+    name: "Leaf Ambient temperature"
+  estimated_ac_power:
+    name: "Leaf estimated AC power"
+  aux_power:
+    name: "Leaf estimated AUX power"
+  ac_power:
+    name: "Leaf AC power"
+  battery_temp_1:
+    name: "Leaf Battery temperature1"
+  battery_temp_2:
+    name: "Leaf Battery temperature2"
+  battery_temp_3:
+    name: "Leaf Battery temperature3"
+  battery_temp_4:
+    name: "Leaf Battery temperature4"
+  power_switch:
+    name: "Leaf Power switch"
+  plug_state:
+    name: "Leaf Plug state"
+  charge_mode:
+    name: "Leaf Charge mode"
 
 sensor:
   - platform: uptime
