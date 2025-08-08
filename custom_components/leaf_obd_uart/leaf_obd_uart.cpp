@@ -7,93 +7,6 @@ namespace esphome {
 namespace leaf_obd_uart {
 
 static const char *const TAG = "leaf_obd_uart";
-/*
-LeafObdComponent::~LeafObdComponent() {
-  if (stream_) {
-    delete stream_;
-    stream_ = nullptr;
-    ESP_LOGD(TAG, "UARTStreamAdapter deleted");
-  }
-}
-*/
-/*
-bool ELM327::begin(Stream &stream) {
-  elm_stream_ = &stream;
-  is_connected_ = false;
-  status_ = DISCONNECTED;
-  response_buffer_[0] = '\0';
-  ESP_LOGD(TAG, "ELM327 begin called with stream");
-
-  if (!elm_stream_) {
-    ESP_LOGE(TAG, "Stream is null!");
-    return false;
-  }
-
-  // Очистка буфера с таймаутом
-  unsigned long start = millis();
-  while (elm_stream_->available() && millis() - start < 200) {
-    elm_stream_->read();
-  }
-  ESP_LOGD(TAG, "UART buffer cleared before initialization");
-
-  if (!sendCommand("ATZ")) {
-    ESP_LOGE(TAG, "Failed to send ATZ command");
-    return false;
-  }
-  start = millis();
-  while (millis() - start < 1500) { // Увеличен таймаут для ATZ
-    yield();
-  }
-
-  if (!readResponse(2000)) { // Увеличен таймаут для ответа ATZ
-    ESP_LOGE(TAG, "No response to ATZ command");
-    return false;
-  }
-  ESP_LOGD(TAG, "Raw ATZ response: %s", response_buffer_);
-  if (strstr(response_buffer_, "ELM327") == nullptr) {
-    ESP_LOGE(TAG, "Invalid ATZ response: %s", response_buffer_);
-    return false;
-  }
-
-  const char *init_commands[] = {
-      "ATE0", "ATL0", "ATSP6", "ATH1", "ATS0", "ATCAF0", "ATFCSD300000", "ATFCSM1"
-  };
-  for (const char *cmd : init_commands) {
-    if (!sendCommand(cmd)) {
-      ESP_LOGE(TAG, "Failed to send command: %s", cmd);
-      return false;
-    }
-    if (!readResponse(500)) {
-      ESP_LOGE(TAG, "No response to command: %s", cmd);
-      return false;
-    }
-    ESP_LOGD(TAG, "Raw %s response: '%s'", cmd, response_buffer_);
-    if (strstr(response_buffer_, "OK") == nullptr && strcmp(cmd, "ATFCSM1") != 0) {
-      ESP_LOGE(TAG, "Invalid response to %s: %s", cmd, response_buffer_);
-      return false;
-    }
-    if (strcmp(cmd, "ATFCSM1") == 0 && strstr(response_buffer_, "?")) {
-      ESP_LOGW(TAG, "ATFCSM1 not supported by this adapter, continuing...");
-      // Продолжаем, так как ATFCSM1 не критично
-    }
-    start = millis();
-    while (millis() - start < 50) {
-      yield();
-    }
-  }
-
-  if (!sendCommand("ATDP") || !readResponse(500)) {
-    ESP_LOGE(TAG, "Failed to check active protocol");
-    return false;
-  }
-  ESP_LOGD(TAG, "Active protocol: %s", response_buffer_);
-
-  is_connected_ = true;
-  status_ = OBD_CONNECTED;
-  ESP_LOGI(TAG, "ELM327 initialized successfully");
-  return true;
-}
-*/
 // Альтернативная инициализация, как в лифспае
 bool ELM327::begin(Stream &stream) {
   elm_stream_ = &stream;
@@ -141,11 +54,16 @@ bool ELM327::begin(Stream &stream) {
 }
 
 
-bool ELM327::isCarResponsive() {
+//bool ELM327::isCarResponsive() {
+float ELM327::isCarResponsive() {
+    // Возвращаемое значение: > 0.0f = напряжение, 0.0f = ошибка или нет данных
+    constexpr float VOLTAGE_ERROR_VALUE = 0.0f;
   if (!elm_stream_) {
     ESP_LOGW(TAG, "Cannot check car responsiveness: Stream is null");
-    return false;
+//    return false;
+    return VOLTAGE_ERROR_VALUE;
   }
+
 
   // Очистка буфера с таймаутом
   unsigned long start = millis();
@@ -155,27 +73,40 @@ bool ELM327::isCarResponsive() {
 
   if (!sendCommand("ATRV")) {
     ESP_LOGW(TAG, "Failed to send ATRV command");
-    return false;
+//    return false;
+    return VOLTAGE_ERROR_VALUE;
   }
 
-  if (!readResponse(500)) {
+  if (!readResponse(250)) {
     ESP_LOGD(TAG, "No response to ATRV. Car is likely off.");
-    return false;
+//    return false;
+    return VOLTAGE_ERROR_VALUE;
   }
 
   if (strstr(response_buffer_, "?") || strstr(response_buffer_, "NO DATA")) {
     ESP_LOGD(TAG, "ATRV response: '%s'. Car is off.", response_buffer_);
-    return false;
+//Этот кусок кода не исполнится никогда, так как ATRV выполняется самим ELM327, а если он ответил, то напряжение уж всяко присутствует.
+//Но удалять не стал.
+//    return false;
+         // Считаем, что команда выполнена, но данных нет (например, адаптер в порядке, но нет питания)
+         // Возвращаем 0.0f как валидное, но "выключенное" состояние.
+    return VOLTAGE_ERROR_VALUE;
   }
 
   float voltage = atof(response_buffer_);
+
+  // Логика определения "responsive" перенесена в LeafObdComponent
+  // Здесь просто возвращаем значение напряжения.
+/*
   if (voltage > 12.8) {
 //  if (voltage > 11.8) {  // По напряжению определяем включена ли машина. Временно занижал, чтобы посмотреть, что там отвечает
     ESP_LOGD(TAG, "ATRV voltage: %.2fV. Car is on.", voltage);
     return true;
   }
   ESP_LOGD(TAG, "ATRV voltage: %.2fV. Car is off.", voltage);
-  return false;
+*/
+  //return false;
+  return voltage;
 }
 
 bool ELM327::readResponse(uint32_t timeout_ms) {
@@ -373,6 +304,7 @@ bool ELM327::queryUDS(const char *ecu, const char *pid, int retries) {
 }
 
 void LeafObdComponent::setup() {
+float measured_atrv_voltage;
   ESP_LOGI(TAG, "Entering LeafObdComponent::setup...");
   if (!parent_ || !stream_) {
     ESP_LOGE(TAG, "UART parent or stream is null!");
@@ -384,14 +316,16 @@ void LeafObdComponent::setup() {
   while (millis() - start < 200) {
     yield();
   }
-  if (!elm_.begin(*stream_)) {
+  if (!elm_.begin(*stream_)) { // Вызываем полную инициализацию ATZ...и т.д.
     ESP_LOGE(TAG, "ELM327 initial setup failed");
     elm_.set_status(DISCONNECTED);
-  } else if (elm_.isCarResponsive()) {
+  } else if (elm_.isCarResponsive()>12.8f) {
     elm_.set_status(CAR_CONNECTED);
+    // atrv_->publish_state(voltage);  Тут эта переменная не объявлена
     ESP_LOGI(TAG, "ELM327 setup complete, car connected");
   } else {
     elm_.set_status(OBD_CONNECTED);
+    // atrv_->publish_state(voltage);  Тут эта переменная не объявлена
     ESP_LOGI(TAG, "ELM327 setup complete, no car response");
   }
 }
@@ -400,6 +334,7 @@ void LeafObdComponent::update() {
   static int state = 0; // Есть 4 состояния: 0 - проверрка состояния, 1 - Запрос Voltage, Temp, SOH, AHr, 2 - Запрос Odometer, 3 - Запрос Number of quick charges / L1/L2 charges
 const char* raw_response;
 int response_len;
+float measured_atrv_voltage;
   ESP_LOGD(TAG, "Updating Leaf OBD data (state=%d)...", state);
 
   switch (state) {
@@ -413,18 +348,23 @@ int response_len;
         }
         if (!elm_.begin(*stream_)) {
           ESP_LOGE(TAG, "ELM327 initialization failed. Retrying later.");
-          publish_nan();
+          publish_nan(); // Сбрасываем показания всех датчиков
           state = 0;
           return;
         }
       }
-      if (!elm_.isCarResponsive()) {
+      measured_atrv_voltage = elm_.isCarResponsive(); // Теперь возвращает float
+//      if (!elm_.isCarResponsive()) {
+      if (measured_atrv_voltage <= 12.8f) { // Значение > 0 - успешное подключение
         ESP_LOGI(TAG, "Car is not responsive. Setting OBD_CONNECTED.");
         elm_.set_status(OBD_CONNECTED);
-        publish_nan();
+        atrv_->publish_state(measured_atrv_voltage); // Публикация сенсора
+//        publish_nan(); // Сбрасываем показания всех датчиков
         state = 0;
         return;
       }
+
+      atrv_->publish_state(measured_atrv_voltage); // Публикация сенсора
       elm_.set_status(CAR_CONNECTED);
       state = 1;
       break;
@@ -803,33 +743,6 @@ if (charge_mode_ && elm_.connected()) {
         charge_mode_->publish_state("Error");
     }
 }
-/*
-      if (soc_ && elm_.connected()) {
-        if (elm_.queryUDS("797", "02215D")) { // 797 - VCM
-          const char* buffer = elm_.get_response_buffer();
-          if (strlen(buffer) >= 13 && strstr(buffer, "79A") && !strstr(buffer, "7F")) {
-            char soc_hex[5];
-            strncpy(soc_hex, &buffer[7], 4);
-            soc_hex[4] = '\0';
-            int soc_raw = strtol(soc_hex, nullptr, 16);
-            if (soc_raw > 0) {
-              float soc_val = soc_raw / 40.96; // Упрощено масштабирование
-              soc_->publish_state(soc_val);
-              ESP_LOGD(TAG, "SOC: %.1f%%", soc_val);
-            } else {
-              soc_->publish_state(NAN);
-              ESP_LOGW(TAG, "Invalid SOC value: %d", soc_raw);
-            }
-          } else {
-            soc_->publish_state(NAN);
-            ESP_LOGW(TAG, "Invalid SOC response: %s", buffer);
-          }
-        } else {
-          soc_->publish_state(NAN);
-          ESP_LOGW(TAG, "Failed to query SOC");
-        }
-      }
-*/
       } // от if setECU("797")...
       state = 2;
       break;
@@ -1210,39 +1123,6 @@ if (odometer_ ) {
         odometer_->publish_state(NAN);
     }
 }
-
-
-
-
-
-
-/*
-      if (odometer_ && elm_.connected()) {
-        if (elm_.queryUDS("743", "022110")) {  // 743 - M&A (Meter)
-          const char* buffer = elm_.get_response_buffer();
-          if (strlen(buffer) >= 15 && strstr(buffer, "763") && !strstr(buffer, "7F")) {
-            char odo_hex[5];
-            strncpy(odo_hex, &buffer[9], 4);
-            odo_hex[4] = '\0';
-            int odo_raw = strtol(odo_hex, nullptr, 16);
-            if (odo_raw > 0) {
-              float odometer_val = odo_raw * 10.0; // Уточнено масштабирование
-              odometer_->publish_state(odometer_val);
-              ESP_LOGD(TAG, "Odometer: %.0f km", odometer_val);
-            } else {
-              odometer_->publish_state(NAN);
-              ESP_LOGW(TAG, "Invalid Odometer value: %d", odo_raw);
-            }
-          } else {
-            odometer_->publish_state(NAN);
-            ESP_LOGW(TAG, "Invalid Odometer response: %s", buffer);
-          }
-        } else {
-          odometer_->publish_state(NAN);
-          ESP_LOGW(TAG, "Failed to query Odometer");
-        }
-      }
-*/
       } // от if setECU("743")
       state = 3;
       break;
@@ -1252,7 +1132,7 @@ if (odometer_ ) {
 void LeafObdComponent::publish_nan() {
   if (soc_) soc_->publish_state(NAN);
   if (hv_) hv_->publish_state(NAN);
-  if (temp_) temp_->publish_state(NAN);
+  if (atrv_) atrv_->publish_state(NAN);
   if (soh_) soh_->publish_state(NAN);
   if (ahr_) ahr_->publish_state(NAN);
   if (odometer_) odometer_->publish_state(NAN);
@@ -1269,7 +1149,7 @@ void LeafObdComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Update Interval: %u ms", PollingComponent::get_update_interval());
   ESP_LOGCONFIG(TAG, "  SOC Sensor: %s", soc_ ? "configured" : "not configured");
   ESP_LOGCONFIG(TAG, "  HV Sensor: %s", hv_ ? "configured" : "not configured");
-  ESP_LOGCONFIG(TAG, "  Temp Sensor: %s", temp_ ? "configured" : "not configured");
+  ESP_LOGCONFIG(TAG, "  12V Sensor: %s", atrv_ ? "configured" : "not configured");
   ESP_LOGCONFIG(TAG, "  SOH Sensor: %s", soh_ ? "configured" : "not configured");
   ESP_LOGCONFIG(TAG, "  AHr Sensor: %s", ahr_ ? "configured" : "not configured");
   ESP_LOGCONFIG(TAG, "  Odometer Sensor: %s", odometer_ ? "configured" : "not configured");

@@ -43,7 +43,8 @@ class ELM327 {
   bool queryUDS(const char *ecu, const char *pid, int retries = 3);
   bool setECU(const char *ecu);
   bool connected();
-  bool isCarResponsive();
+  //bool isCarResponsive();
+  float isCarResponsive(); // Возвращает напряжение (>0.0f) или 0.0f в случае ошибки/отсутствия данных
   ELM327Status get_status() { return status_; }
   void set_status(ELM327Status new_status) { this->status_ = new_status; }
   const char* get_response_buffer() const { return response_buffer_; }
@@ -69,7 +70,7 @@ class LeafObdComponent : public PollingComponent {
   }
   void set_soc_sensor(sensor::Sensor *soc) { this->soc_ = soc; }
   void set_hv_sensor(sensor::Sensor *hv) { this->hv_ = hv; }
-  void set_temp_sensor(sensor::Sensor *temp) { this->temp_ = temp; }
+  void set_atrv_sensor(sensor::Sensor *atrv) { this->atrv_ = atrv; }
   void set_soh_sensor(sensor::Sensor *soh) { this->soh_ = soh; }
   void set_ahr_sensor(sensor::Sensor *ahr) { this->ahr_ = ahr; }
   void set_odometer_sensor(sensor::Sensor *odometer) { this->odometer_ = odometer; }
@@ -113,7 +114,7 @@ class LeafObdComponent : public PollingComponent {
   UARTStreamAdapter *stream_{nullptr};
   sensor::Sensor *soc_{nullptr};
   sensor::Sensor *hv_{nullptr};
-  sensor::Sensor *temp_{nullptr};
+  sensor::Sensor *atrv_{nullptr};
   sensor::Sensor *soh_{nullptr};
   sensor::Sensor *ahr_{nullptr};
   sensor::Sensor *odometer_{nullptr};

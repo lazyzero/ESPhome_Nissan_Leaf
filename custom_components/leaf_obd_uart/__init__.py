@@ -42,7 +42,7 @@ AUTO_LOAD = ["sensor", "text_sensor", "binary_sensor"] # <-- Добавлено
 # Существующие
 CONF_SOC = "soc"
 CONF_HV = "hv" # HV Voltage
-CONF_TEMP = "temp" # Battery Temp Avg (или первый, если упрощено)
+CONF_ATRV = "atrv" # Напряжение на 12В аккумуляторе по команде ATRV
 CONF_SOH = "soh"
 CONF_AHR = "ahr"
 CONF_ODOMETER = "odometer"
@@ -83,11 +83,11 @@ SENSOR_SCHEMA = cv.Schema({
         device_class=DEVICE_CLASS_VOLTAGE,
         state_class=STATE_CLASS_MEASUREMENT,
     ),
-    cv.Optional(CONF_TEMP): sensor.sensor_schema( # Battery Temp
-        unit_of_measurement=UNIT_CELSIUS,
-        icon=ICON_THERMOMETER,
+    cv.Optional(CONF_ATRV): sensor.sensor_schema( # Напряжение на 12В аккумуляторе по команде ATRV
+        unit_of_measurement=UNIT_VOLT,
+        icon="mdi:car-battery", # Значок аккумулятора 
         accuracy_decimals=1,
-        device_class=DEVICE_CLASS_TEMPERATURE,
+        device_class=DEVICE_CLASS_VOLTAGE,
         state_class=STATE_CLASS_MEASUREMENT,
     ),
     cv.Optional(CONF_SOH): sensor.sensor_schema(
@@ -175,10 +175,6 @@ SENSOR_SCHEMA = cv.Schema({
     #    device_class=DEVICE_CLASS_EMPTY, # Нет стандартного класса для bool
     #    state_class=STATE_CLASS_MEASUREMENT,
     #),
-    # cv.Optional(CONF_BATTERY_TEMP_1): sensor.sensor_schema(...),
-    # cv.Optional(CONF_BATTERY_TEMP_2): sensor.sensor_schema(...),
-    # cv.Optional(CONF_BATTERY_TEMP_3): sensor.sensor_schema(...),
-    # cv.Optional(CONF_BATTERY_TEMP_4): sensor.sensor_schema(...),
     cv.Optional(CONF_BATTERY_TEMP_1): sensor.sensor_schema(
         unit_of_measurement="°C",
         icon="mdi:thermometer",
@@ -258,9 +254,9 @@ async def to_code(config):
     if CONF_HV in config:
         hv_sensor = await sensor.new_sensor(config[CONF_HV])
         cg.add(var.set_hv_sensor(hv_sensor))
-    if CONF_TEMP in config: # Battery Temp
-        temp_sensor = await sensor.new_sensor(config[CONF_TEMP])
-        cg.add(var.set_temp_sensor(temp_sensor))
+    if CONF_ATRV in config: # Напряжение на 12В аккумуляторе по команде ATRV
+        atrv_sensor = await sensor.new_sensor(config[CONF_ATRV])
+        cg.add(var.set_atrv_sensor(atrv_sensor))
     if CONF_SOH in config:
         soh_sensor = await sensor.new_sensor(config[CONF_SOH])
         cg.add(var.set_soh_sensor(soh_sensor))
@@ -298,10 +294,6 @@ async def to_code(config):
     #if CONF_POWER_SWITCH in config:
     #    power_switch_sensor = await sensor.new_sensor(config[CONF_POWER_SWITCH])
     #    cg.add(var.set_power_switch_sensor(power_switch_sensor))
-    # if CONF_BATTERY_TEMP_1 in config:
-    #     battery_temp_1_sensor = await sensor.new_sensor(config[CONF_BATTERY_TEMP_1])
-    #     cg.add(var.set_battery_temp_1_sensor(battery_temp_1_sensor))
-    # ... и так далее для остальных температур
     if CONF_BATTERY_TEMP_1 in config:
         battery_temp_1_sensor = await sensor.new_sensor(config[CONF_BATTERY_TEMP_1])
         cg.add(var.set_battery_temp_1_sensor(battery_temp_1_sensor))
