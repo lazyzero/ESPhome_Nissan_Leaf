@@ -61,12 +61,6 @@ leaf_obd_uart:
     icon: "mdi:flash"
     accuracy_decimals: 2
     device_class: voltage
-  temp:
-    name: "Leaf Battery Temp"
-    unit_of_measurement: "°C"
-    icon: "mdi:thermometer"
-    accuracy_decimals: 1
-    device_class: temperature
   soh:
     name: "Leaf Battery SOH"
     unit_of_measurement: "%"
@@ -115,6 +109,9 @@ leaf_obd_uart:
     name: "Leaf Plug state"
   charge_mode:
     name: "Leaf Charge mode"
+  atrv:
+    name: "ELM327 Voltage"
+    accuracy_decimals: 1
 
 sensor:
   - platform: uptime
