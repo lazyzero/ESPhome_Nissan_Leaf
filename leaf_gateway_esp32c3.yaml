@@ -6,7 +6,7 @@ esphome:
   friendly_name: "Leaf OBD Gateway (KC868)"
 
 esp32:
-  board: esp32dev
+  board: esp32-c3-devkitm-1
   framework:
     type: arduino
 
@@ -38,13 +38,13 @@ external_components:
 
 uart:
   - id: uart_obd
-    tx_pin: GPIO12  # UART1 TX
-    rx_pin: GPIO13  # UART1 RX
-    baud_rate: 38400  # Для HC-05/ELM327
+    tx_pin: GPIO7  # UART TX
+    rx_pin: GPIO6  # UART RX
+    baud_rate: 38400  #HC-05/ELM327
 
 logger:
   level: DEBUG
-  baud_rate: 115200       # 0 для отключения вывода логов в UART
+  baud_rate: 115200       # logging USB
   logs:
     leaf_obd_uart: DEBUG
 
